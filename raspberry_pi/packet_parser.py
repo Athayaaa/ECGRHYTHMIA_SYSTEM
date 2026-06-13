@@ -1,4 +1,4 @@
-"""Binary UART packet parser for ESP32 dummy ECG frames."""
+"""Binary serial packet parser for ESP32 dummy ECG frames."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ import struct
 
 from crc16 import compute as crc16_compute
 
-SYNC = b"\xEC\x47"
+SYNC = b"\xAA\x55"
 VERSION = 0x01
-TYPE_SAMPLE = 0x01
-PAYLOAD_SIZE = 16
-HEADER_SIZE = 6
+SAMPLE_COUNT = 1
+PAYLOAD_SIZE = 25
+HEADER_SIZE = 5
 CRC_SIZE = 2
 PACKET_SIZE = HEADER_SIZE + PAYLOAD_SIZE + CRC_SIZE
 
@@ -22,6 +22,8 @@ MAX_FORWARD_SEQUENCE_GAP = 0x7FFFFFFF
 class ECGPacket:
     sequence: int
     timestamp_us: int
+    sample_count: int
+    sampling_rate_hz: int
     ch1: int
     ch2: int
     ch3: int
@@ -118,22 +120,28 @@ class PacketParser:
             return False
 
         version = packet[2]
-        packet_type = packet[3]
-        payload_size = struct.unpack_from("<H", packet, 4)[0]
-        return (
-            version == VERSION
-            and packet_type == TYPE_SAMPLE
-            and payload_size == PAYLOAD_SIZE
-        )
+        payload_size = struct.unpack_from("<H", packet, 3)[0]
+        return version == VERSION and payload_size == PAYLOAD_SIZE
 
     @staticmethod
     def _parse_packet(packet: bytes) -> ECGPacket:
-        sequence, timestamp_us, ch1, ch2, ch3, flags, _reserved = struct.unpack_from(
-            "<IIhhhBB", packet, HEADER_SIZE
+        (
+            sequence,
+            timestamp_us,
+            sample_count,
+            sampling_rate_hz,
+            flags,
+            ch1,
+            ch2,
+            ch3,
+        ) = struct.unpack_from(
+            "<IIHHBiii", packet, HEADER_SIZE
         )
         return ECGPacket(
             sequence=sequence,
             timestamp_us=timestamp_us,
+            sample_count=sample_count,
+            sampling_rate_hz=sampling_rate_hz,
             ch1=ch1,
             ch2=ch2,
             ch3=ch3,

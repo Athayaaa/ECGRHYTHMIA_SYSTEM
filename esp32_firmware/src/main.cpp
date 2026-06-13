@@ -31,12 +31,16 @@ void printStatus() {
   Serial.println(simulationEnabled ? F("on") : F("off"));
   Serial.print(F("sample_rate_hz="));
   Serial.println(Config::ECG_SAMPLE_RATE_HZ);
-  Serial.print(F("uart_baud="));
-  Serial.println(Config::ECG_UART_BAUD);
-  Serial.print(F("uart_tx_gpio="));
-  Serial.println(Config::ECG_UART_TX_PIN);
-  Serial.print(F("uart_rx_gpio="));
-  Serial.println(Config::ECG_UART_RX_PIN);
+  Serial.print(F("output_transport="));
+  Serial.println(Config::OUTPUT_USB_ENABLED ? F("usb") : F("uart2"));
+  if (!Config::OUTPUT_USB_ENABLED) {
+    Serial.print(F("uart_baud="));
+    Serial.println(Config::UART_BAUDRATE);
+    Serial.print(F("uart_tx_gpio="));
+    Serial.println(Config::UART_TX_PIN);
+    Serial.print(F("uart_rx_gpio="));
+    Serial.println(Config::UART_RX_PIN);
+  }
   Serial.print(F("packet_bytes="));
   Serial.println(ECGPacket::PACKET_SIZE);
   Serial.println(F("commands: start, stop, status, sim on, sim off"));

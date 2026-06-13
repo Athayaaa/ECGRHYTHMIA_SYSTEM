@@ -1,7 +1,7 @@
-uart:
-  port: /dev/serial0
-  baudrate: 921600
-  timeout_seconds: 0.1
+serial:
+  port: "/dev/ttyAMA0"
+  baudrate: 115200
+  timeout: 0.1
   read_size_bytes: 1024
 
 sampling:
