@@ -1,4 +1,4 @@
-"""Raspberry Pi UART receiver for Phase 2 ECG frames."""
+"""Raspberry Pi serial receiver for Phase 2 ECG frames."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="ECGRHYTHMIA Phase 2 UART receiver")
+    parser = argparse.ArgumentParser(description="ECGRHYTHMIA Phase 2 serial receiver")
     parser.add_argument(
         "--config",
         type=Path,
@@ -52,16 +52,18 @@ def main() -> int:
     config_path = args.config.resolve()
     config = load_config(config_path)
 
-    uart_config = config.get("uart", {})
+    serial_config = config.get("serial") or config.get("uart", {})
     sampling_config = config.get("sampling", {})
     output_config = config.get("output", {})
     runtime_config = config.get("runtime", {})
     device_config = config.get("device", {})
 
-    port = args.port or uart_config.get("port", "/dev/serial0")
-    baudrate = args.baudrate or int(uart_config.get("baudrate", 921600))
-    timeout_seconds = float(uart_config.get("timeout_seconds", 0.1))
-    read_size_bytes = int(uart_config.get("read_size_bytes", 1024))
+    port = args.port or serial_config.get("port", "/dev/ttyAMA0")
+    baudrate = args.baudrate or int(serial_config.get("baudrate", 115200))
+    timeout_seconds = float(
+        serial_config.get("timeout", serial_config.get("timeout_seconds", 0.1))
+    )
+    read_size_bytes = int(serial_config.get("read_size_bytes", 1024))
 
     sample_rate_hz = int(sampling_config.get("sample_rate_hz", 250))
     frame_seconds = int(sampling_config.get("frame_seconds", 10))

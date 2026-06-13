@@ -16,16 +16,16 @@ size_t ECGPacket::encodeSample(uint8_t* buffer,
   buffer[offset++] = SYNC_0;
   buffer[offset++] = SYNC_1;
   buffer[offset++] = VERSION;
-  buffer[offset++] = TYPE_SAMPLE;
   writeU16LE(buffer, offset, PAYLOAD_SIZE);
 
   writeU32LE(buffer, offset, sequence);
   writeU32LE(buffer, offset, timestampUs);
-  writeI16LE(buffer, offset, sample.leadIuV);
-  writeI16LE(buffer, offset, sample.leadIIuV);
-  writeI16LE(buffer, offset, sample.leadIIIuV);
+  writeU16LE(buffer, offset, SAMPLE_COUNT);
+  writeU16LE(buffer, offset, SAMPLING_RATE_HZ);
   buffer[offset++] = flags;
-  buffer[offset++] = 0x00;
+  writeI32LE(buffer, offset, sample.leadIuV);
+  writeI32LE(buffer, offset, sample.leadIIuV);
+  writeI32LE(buffer, offset, sample.leadIIIuV);
 
   const uint16_t crc = CRC16::compute(buffer, offset);
   writeU16LE(buffer, offset, crc);
@@ -54,13 +54,13 @@ void ECGPacket::writeU16LE(uint8_t* buffer, size_t& offset, uint16_t value) {
   buffer[offset++] = static_cast<uint8_t>((value >> 8) & 0xFF);
 }
 
-void ECGPacket::writeI16LE(uint8_t* buffer, size_t& offset, int16_t value) {
-  writeU16LE(buffer, offset, static_cast<uint16_t>(value));
-}
-
 void ECGPacket::writeU32LE(uint8_t* buffer, size_t& offset, uint32_t value) {
   buffer[offset++] = static_cast<uint8_t>(value & 0xFF);
   buffer[offset++] = static_cast<uint8_t>((value >> 8) & 0xFF);
   buffer[offset++] = static_cast<uint8_t>((value >> 16) & 0xFF);
   buffer[offset++] = static_cast<uint8_t>((value >> 24) & 0xFF);
+}
+
+void ECGPacket::writeI32LE(uint8_t* buffer, size_t& offset, int32_t value) {
+  writeU32LE(buffer, offset, static_cast<uint32_t>(value));
 }

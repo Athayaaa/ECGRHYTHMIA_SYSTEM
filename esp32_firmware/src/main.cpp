@@ -4,7 +4,9 @@
 #include "ECGPacket.h"
 #include "config.h"
 
+#if !ECG_OUTPUT_USB
 HardwareSerial ecgSerial(Config::ECG_UART_NUM);
+#endif
 DummyECGGenerator dummyGenerator(Config::ECG_SAMPLE_RATE_HZ);
 
 bool streamingEnabled = Config::STREAM_ENABLED_DEFAULT;
@@ -12,6 +14,14 @@ bool simulationEnabled = Config::SIMULATION_ENABLED_DEFAULT;
 uint32_t sampleSequence = 0;
 uint32_t nextSampleTimeUs = 0;
 String commandBuffer;
+
+Stream& ecgOutputStream() {
+#if ECG_OUTPUT_USB
+  return Serial;
+#else
+  return ecgSerial;
+#endif
+}
 
 void printStatus() {
   Serial.println();
@@ -22,12 +32,16 @@ void printStatus() {
   Serial.println(simulationEnabled ? F("on") : F("off"));
   Serial.print(F("sample_rate_hz="));
   Serial.println(Config::ECG_SAMPLE_RATE_HZ);
-  Serial.print(F("uart_baud="));
-  Serial.println(Config::ECG_UART_BAUD);
-  Serial.print(F("uart_tx_gpio="));
-  Serial.println(Config::ECG_UART_TX_PIN);
-  Serial.print(F("uart_rx_gpio="));
-  Serial.println(Config::ECG_UART_RX_PIN);
+  Serial.print(F("output_transport="));
+  Serial.println(Config::OUTPUT_USB_ENABLED ? F("usb") : F("uart2"));
+  if (!Config::OUTPUT_USB_ENABLED) {
+    Serial.print(F("uart_baud="));
+    Serial.println(Config::UART_BAUDRATE);
+    Serial.print(F("uart_tx_gpio="));
+    Serial.println(Config::UART_TX_PIN);
+    Serial.print(F("uart_rx_gpio="));
+    Serial.println(Config::UART_RX_PIN);
+  }
   Serial.print(F("packet_bytes="));
   Serial.println(ECGPacket::PACKET_SIZE);
   Serial.println(F("commands: start, stop, status, sim on, sim off"));
@@ -93,7 +107,7 @@ void sendDueSamples() {
       dummyGenerator.nextSample(sampleSequence, simulationEnabled);
   const uint8_t flags = simulationEnabled ? 0x01 : 0x00;
 
-  ECGPacket::writeSample(ecgSerial, sampleSequence, nowUs, sample, flags);
+  ECGPacket::writeSample(ecgOutputStream(), sampleSequence, nowUs, sample, flags);
   ++sampleSequence;
   nextSampleTimeUs += Config::ECG_SAMPLE_INTERVAL_US;
 
@@ -104,10 +118,12 @@ void sendDueSamples() {
 
 void setup() {
   Serial.begin(Config::USB_SERIAL_BAUD);
-  ecgSerial.begin(Config::ECG_UART_BAUD,
+#if !ECG_OUTPUT_USB
+  ecgSerial.begin(Config::UART_BAUDRATE,
                   SERIAL_8N1,
-                  Config::ECG_UART_RX_PIN,
-                  Config::ECG_UART_TX_PIN);
+                  Config::UART_RX_PIN,
+                  Config::UART_TX_PIN);
+#endif
 
   nextSampleTimeUs = micros();
   delay(300);
