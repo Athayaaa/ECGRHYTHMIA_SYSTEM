@@ -2,9 +2,15 @@
 
 #include <Arduino.h>
 
+#ifndef ECG_OUTPUT_USB
+#define ECG_OUTPUT_USB 0
+#endif
+
 namespace Config {
 
 constexpr uint32_t USB_SERIAL_BAUD = 115200;
+
+constexpr bool ECG_OUTPUT_USB_ENABLED = ECG_OUTPUT_USB;
 
 constexpr int ECG_UART_NUM = 2;
 constexpr int ECG_UART_TX_PIN = 17;

@@ -1,10 +1,11 @@
 #include <Arduino.h>
 
 #include "DummyECGGenerator.h"
+#include "ECGOutputTransport.h"
 #include "ECGPacket.h"
 #include "config.h"
 
-HardwareSerial ecgSerial(Config::ECG_UART_NUM);
+ECGOutputTransport ecgOutput;
 DummyECGGenerator dummyGenerator(Config::ECG_SAMPLE_RATE_HZ);
 
 bool streamingEnabled = Config::STREAM_ENABLED_DEFAULT;
@@ -13,9 +14,17 @@ uint32_t sampleSequence = 0;
 uint32_t nextSampleTimeUs = 0;
 String commandBuffer;
 
+bool textOutputAllowed() {
+  // USB output mode shares Serial with the binary stream, so avoid logs while
+  // streaming except for the initial boot status printed before samples start.
+  return !Config::ECG_OUTPUT_USB_ENABLED || !streamingEnabled;
+}
+
 void printStatus() {
   Serial.println();
   Serial.println(F("ECGRHYTHMIA Phase 1 ESP32 dummy ECG"));
+  Serial.print(F("output="));
+  Serial.println(Config::ECG_OUTPUT_USB_ENABLED ? F("usb_serial") : F("uart2"));
   Serial.print(F("stream="));
   Serial.println(streamingEnabled ? F("on") : F("off"));
   Serial.print(F("sim="));
@@ -33,6 +42,12 @@ void printStatus() {
   Serial.println(F("commands: start, stop, status, sim on, sim off"));
 }
 
+void printLineIfTextAllowed(const __FlashStringHelper* message) {
+  if (textOutputAllowed()) {
+    Serial.println(message);
+  }
+}
+
 void handleCommand(const String& rawCommand) {
   String command = rawCommand;
   command.trim();
@@ -45,22 +60,27 @@ void handleCommand(const String& rawCommand) {
   if (command == "start") {
     streamingEnabled = true;
     nextSampleTimeUs = micros();
-    Serial.println(F("stream started"));
+    printLineIfTextAllowed(F("stream started"));
   } else if (command == "stop") {
     streamingEnabled = false;
-    Serial.println(F("stream stopped"));
+    printLineIfTextAllowed(F("stream stopped"));
   } else if (command == "status") {
-    printStatus();
+    if (textOutputAllowed()) {
+      printStatus();
+    }
   } else if (command == "sim on") {
     simulationEnabled = true;
-    Serial.println(F("simulation enabled"));
+    printLineIfTextAllowed(F("simulation enabled"));
   } else if (command == "sim off") {
     simulationEnabled = false;
-    Serial.println(F("simulation disabled; streaming sends zero-valued leads"));
+    printLineIfTextAllowed(
+        F("simulation disabled; streaming sends zero-valued leads"));
   } else {
-    Serial.print(F("unknown command: "));
-    Serial.println(rawCommand);
-    Serial.println(F("commands: start, stop, status, sim on, sim off"));
+    if (textOutputAllowed()) {
+      Serial.print(F("unknown command: "));
+      Serial.println(rawCommand);
+      Serial.println(F("commands: start, stop, status, sim on, sim off"));
+    }
   }
 }
 
@@ -93,7 +113,11 @@ void sendDueSamples() {
       dummyGenerator.nextSample(sampleSequence, simulationEnabled);
   const uint8_t flags = simulationEnabled ? 0x01 : 0x00;
 
-  ECGPacket::writeSample(ecgSerial, sampleSequence, nowUs, sample, flags);
+  ECGPacket::writeSample(ecgOutput.stream(),
+                         sampleSequence,
+                         nowUs,
+                         sample,
+                         flags);
   ++sampleSequence;
   nextSampleTimeUs += Config::ECG_SAMPLE_INTERVAL_US;
 
@@ -104,10 +128,7 @@ void sendDueSamples() {
 
 void setup() {
   Serial.begin(Config::USB_SERIAL_BAUD);
-  ecgSerial.begin(Config::ECG_UART_BAUD,
-                  SERIAL_8N1,
-                  Config::ECG_UART_RX_PIN,
-                  Config::ECG_UART_TX_PIN);
+  ecgOutput.begin();
 
   nextSampleTimeUs = micros();
   delay(300);
