@@ -1,0 +1,21 @@
+uart:
+  port: /dev/serial0
+  baudrate: 921600
+  timeout_seconds: 0.1
+  read_size_bytes: 1024
+
+sampling:
+  sample_rate_hz: 250
+  frame_seconds: 10
+
+output:
+  directory: data
+  raw_csv: raw_ecg.csv
+  sqlite_db: ecg_metadata.sqlite
+
+runtime:
+  status_interval_seconds: 5
+
+device:
+  device_id: esp32dev_dummy
+  state: stored

@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "esp32_firmware",
+			"path": "esp32_firmware"
+		}
+	],
+	"settings": {}
+}

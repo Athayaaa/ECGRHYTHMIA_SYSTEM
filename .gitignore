@@ -1,0 +1,26 @@
+# PlatformIO build
+.pio/
+esp32_firmware/.pio/
+esp32_firmware/.vscode/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Data hasil pengujian
+data/
+raspberry_pi/data/
+*.csv
+*.npy
+*.bin
+*.db
+*.sqlite
+
+# OS/editor
+.DS_Store
+Thumbs.db
+
+# Jangan upload file sementara
+*.log
