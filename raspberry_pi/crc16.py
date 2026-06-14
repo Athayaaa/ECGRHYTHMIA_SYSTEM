@@ -1,4 +1,4 @@
-"""CRC16-CCITT-FALSE used by the ESP32 ECG UART packet format."""
+"""CRC16-CCITT-FALSE used by the ESP32 ECG binary serial packet format."""
 
 from __future__ import annotations
 

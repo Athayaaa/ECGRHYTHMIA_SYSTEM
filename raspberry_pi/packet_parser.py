@@ -152,6 +152,7 @@ class PacketParser:
         previous = self.stats.last_sequence
         self.stats.last_sequence = sequence
 
+        # The first valid packet after startup establishes the sequence baseline.
         if previous is None:
             return
 

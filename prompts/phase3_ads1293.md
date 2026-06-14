@@ -20,7 +20,10 @@ Konfigurasi ECG:
 - ch1 = Lead I = LA - RA.
 - ch2 = Lead II = LL - RA.
 - ch3 = Lead III = Lead II - Lead I.
-- Jangan gunakan V1.
+- channel_order = ["Lead I", "Lead II", "Lead III"].
+- ch3 adalah Lead III, bukan ECG Lead V1.
+- Jangan gunakan ECG Lead V1.
+- RLD/RL hanya reference/drive electrode opsional, bukan channel data.
 
 Sampling:
 - ADS1293 native gunakan SPS_256.

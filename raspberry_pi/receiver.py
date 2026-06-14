@@ -35,8 +35,8 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CONFIG_PATH,
         help="Path to config.yaml",
     )
-    parser.add_argument("--port", help="UART device path override")
-    parser.add_argument("--baudrate", type=int, help="UART baudrate override")
+    parser.add_argument("--port", help="Serial device path override")
+    parser.add_argument("--baudrate", type=int, help="Serial baudrate override")
     parser.add_argument("--output-dir", type=Path, help="Output directory override")
     parser.add_argument(
         "--max-frames",
@@ -52,18 +52,18 @@ def main() -> int:
     config_path = args.config.resolve()
     config = load_config(config_path)
 
-    serial_config = config.get("serial") or config.get("uart", {})
+    serial_config = config.get("serial", config.get("uart", {}))
     sampling_config = config.get("sampling", {})
     output_config = config.get("output", {})
     runtime_config = config.get("runtime", {})
     device_config = config.get("device", {})
 
-    port = args.port or serial_config.get("port", "/dev/ttyAMA0")
+    port = args.port or serial_config.get("port", "/dev/ttyUSB0")
     baudrate = args.baudrate or int(serial_config.get("baudrate", 115200))
-    timeout_seconds = float(
-        serial_config.get("timeout", serial_config.get("timeout_seconds", 0.1))
-    )
+    timeout_seconds = float(serial_config.get("timeout_seconds", 0.1))
     read_size_bytes = int(serial_config.get("read_size_bytes", 1024))
+    startup_delay_sec = float(serial_config.get("startup_delay_sec", 3.0))
+    flush_on_start = bool(serial_config.get("flush_on_start", True))
 
     sample_rate_hz = int(sampling_config.get("sample_rate_hz", 250))
     frame_seconds = int(sampling_config.get("frame_seconds", 10))
@@ -98,9 +98,17 @@ def main() -> int:
     )
 
     try:
-        with serial.Serial(port=port, baudrate=baudrate, timeout=timeout_seconds) as uart:
+        with serial.Serial(
+            port=port, baudrate=baudrate, timeout=timeout_seconds
+        ) as serial_port:
+            disable_modem_control(serial_port)
+            if startup_delay_sec > 0:
+                time.sleep(startup_delay_sec)
+            if flush_on_start:
+                serial_port.reset_input_buffer()
+
             while True:
-                data = uart.read(read_size_bytes)
+                data = serial_port.read(read_size_bytes)
                 if data:
                     packets = parser.feed(data)
                     for packet in packets:
@@ -153,6 +161,19 @@ def main() -> int:
     finally:
         exporter.close()
         metadata_store.close()
+
+
+def disable_modem_control(serial_port: serial.Serial) -> None:
+    """Disable USB serial DTR/RTS lines when the adapter exposes them."""
+
+    for setter_name in ("setDTR", "setRTS"):
+        setter = getattr(serial_port, setter_name, None)
+        if setter is None:
+            continue
+        try:
+            setter(False)
+        except (OSError, ValueError, serial.SerialException):
+            continue
 
 
 if __name__ == "__main__":

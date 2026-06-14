@@ -9,7 +9,10 @@ Target:
   - ch1 = Lead I dummy
   - ch2 = Lead II dummy
   - ch3 = Lead III = Lead II - Lead I
-- Kirim data melalui UART binary frame.
+- channel_order = ["Lead I", "Lead II", "Lead III"].
+- ch3 adalah Lead III, bukan ECG Lead V1.
+- Kirim data melalui USB Serial binary frame untuk testing saat ini.
+- UART binary frame tetap disiapkan untuk target/fase final.
 - Gunakan CRC16.
 - Jangan implementasikan ADS1293 dulu.
 - Jangan implementasikan Raspberry Pi full pipeline dulu selain parser minimal jika diperlukan.
@@ -28,10 +31,18 @@ Buat file:
 - src/CRC16.h
 - src/CRC16.cpp
 
-UART testing:
+UART testing later/final target:
 - TX GPIO17
 - RX GPIO16
 - baudrate 921600
+
+Current verified USB Serial testing:
+- ESP32 Dev Module / DevKit board
+- port Raspberry Pi: /dev/ttyUSB0
+- baudrate 115200
+- CSV output 2501 rows
+- NPY output shape (2500, 3), dtype float32
+- CRC errors 0, packet loss 0
 
 USB Serial command:
 - start

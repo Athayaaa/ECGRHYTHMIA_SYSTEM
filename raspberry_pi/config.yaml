@@ -1,8 +1,10 @@
 serial:
-  port: "/dev/ttyAMA0"
+  port: /dev/ttyUSB0
   baudrate: 115200
-  timeout: 0.1
+  timeout_seconds: 0.1
   read_size_bytes: 1024
+  startup_delay_sec: 3.0
+  flush_on_start: true
 
 sampling:
   sample_rate_hz: 250
