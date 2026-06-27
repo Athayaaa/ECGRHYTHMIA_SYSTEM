@@ -6,6 +6,13 @@ serial:
   startup_delay_sec: 3.0
   flush_on_start: true
 
+source: ads1293
+send_start_commands: true
+start_commands:
+  - "ads debug off"
+  - "ads start"
+  - "ads stream start"
+
 sampling:
   sample_rate_hz: 250
   frame_seconds: 10

@@ -4,9 +4,9 @@
 #include <stdint.h>
 
 struct ECGSample {
-  int16_t leadIuV;
-  int16_t leadIIuV;
-  int16_t leadIIIuV;
+  int32_t leadIuV;
+  int32_t leadIIuV;
+  int32_t leadIIIuV;
 };
 
 class DummyECGGenerator {

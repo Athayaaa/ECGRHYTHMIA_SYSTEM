@@ -66,7 +66,7 @@ bool ADS1293Reader::startAcquisition() {
 
   acquisitionEnabled_ = ok;
   lastMessage_ = ok
-                     ? "ADS1293 acquisition started; Phase 3B packet streaming is disabled"
+                     ? "ADS1293 acquisition started"
                      : "ADS1293 acquisition start failed";
   refreshStatus();
   return ok;
@@ -122,7 +122,8 @@ bool ADS1293Reader::readRawSample(RawSample& sample) {
     return false;
   }
 
-  refreshStatus();
+  dataReady_ = ads_.isDataReady();
+  errorStatus_ = ads_.readErrorStatus();
   sample.dataReady = dataReady_;
   sample.errorStatus = errorStatus_;
 

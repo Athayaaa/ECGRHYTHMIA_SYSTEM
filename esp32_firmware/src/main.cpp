@@ -45,7 +45,7 @@ void printStatus() {
   Serial.println(F("ECGRHYTHMIA ESP32 firmware"));
   Serial.print(F("phase="));
 #if ENABLE_ADS1293
-  Serial.println(F("3B ADS1293 raw sample read test"));
+  Serial.println(F("3C ADS1293 binary stream"));
   Serial.println(F("source=ads1293"));
 #else
   Serial.println(F("2.5 dummy USB pipeline"));
@@ -70,15 +70,25 @@ void printStatus() {
 #if ENABLE_ADS1293
   adsReader.refreshStatus();
   adsReader.printStatus(Serial);
-  Serial.print(F("ads_debug="));
+  Serial.print(F("debug="));
   Serial.println(adsDebugEnabled ? F("on") : F("off"));
-  Serial.println(F("commands: ads status, ads start, ads stop, ads read, ads debug on, ads debug off, status"));
+  Serial.println(F("commands: ads status, ads start, ads stop, ads read, ads debug on, ads debug off, ads stream start, ads stream stop, status"));
 #else
   Serial.println(F("commands: start, stop, status, sim on, sim off"));
 #endif
 }
 
 #if ENABLE_ADS1293
+bool stopAdsBinaryStreamForText() {
+  if (!streamingEnabled) {
+    return false;
+  }
+
+  streamingEnabled = false;
+  Serial.flush();
+  return true;
+}
+
 void printAdsSampleUnavailable(const __FlashStringHelper* prefix,
                                const ADS1293Reader::RawSample& sample) {
   Serial.print(prefix);
@@ -95,16 +105,59 @@ void printAdsSampleUnavailable(const __FlashStringHelper* prefix,
 }
 
 void printAdsRawSampleOnce(const __FlashStringHelper* prefix) {
-  if (streamingEnabled) {
-    return;
-  }
-
   ADS1293Reader::RawSample sample;
   if (adsReader.readRawSample(sample)) {
     adsReader.printRawSample(Serial, sample);
   } else {
     printAdsSampleUnavailable(prefix, sample);
   }
+}
+
+bool startAdsAcquisitionIfNeeded() {
+  if (adsReader.isAcquisitionEnabled()) {
+    return true;
+  }
+
+  if (!adsReader.startAcquisition()) {
+    Serial.println(adsReader.lastMessage());
+    return false;
+  }
+
+  Serial.println(adsReader.lastMessage());
+  return true;
+}
+
+void startAdsBinaryStream() {
+  stopAdsBinaryStreamForText();
+
+  if (adsDebugEnabled) {
+    adsDebugEnabled = false;
+    Serial.println(F("ads debug disabled before binary stream start"));
+  }
+
+  if (!startAdsAcquisitionIfNeeded()) {
+    return;
+  }
+
+  sampleSequence = 0;
+  nextSampleTimeUs = micros();
+  Serial.println(F("ads binary stream started: source=ads1293 sample_rate_hz=250 packet_bytes=32"));
+  Serial.flush();
+  streamingEnabled = true;
+}
+
+void stopAdsBinaryStream(bool alreadyStoppedForCommand) {
+  const bool wasStreaming =
+      alreadyStoppedForCommand || stopAdsBinaryStreamForText();
+  Serial.println(wasStreaming ? F("ads binary stream stopped")
+                              : F("ads binary stream already stopped"));
+}
+
+void stopAllAdsOutput() {
+  stopAdsBinaryStreamForText();
+  adsDebugEnabled = false;
+  adsReader.stopAcquisition();
+  Serial.println(F("ads stopped: acquisition=off debug=off binary_stream=off"));
 }
 #endif
 
@@ -117,9 +170,13 @@ void handleCommand(const String& rawCommand) {
     return;
   }
 
+#if ENABLE_ADS1293
+  const bool adsBinaryStoppedForCommand = stopAdsBinaryStreamForText();
+#endif
+
   if (command == "start") {
 #if ENABLE_ADS1293
-    Serial.println(F("Phase 3B ADS1293 build: use 'ads start'; binary packet streaming is disabled"));
+    Serial.println(F("Phase 3C ADS1293 build: use 'ads stream start' for binary packets"));
 #else
     streamingEnabled = true;
     nextSampleTimeUs = micros();
@@ -132,30 +189,29 @@ void handleCommand(const String& rawCommand) {
     printStatus();
 #if ENABLE_ADS1293
   } else if (command == "ads status") {
-    adsReader.refreshStatus();
-    adsReader.printStatus(Serial);
+    printStatus();
   } else if (command == "ads start") {
     streamingEnabled = false;
     adsReader.startAcquisition();
     nextAdsDebugTimeMs = millis();
     Serial.println(adsReader.lastMessage());
   } else if (command == "ads stop") {
-    streamingEnabled = false;
-    adsReader.stopAcquisition();
-    Serial.println(adsReader.lastMessage());
+    stopAllAdsOutput();
   } else if (command == "ads read") {
     printAdsRawSampleOnce(F("ads read"));
   } else if (command == "ads debug on") {
-    if (!streamingEnabled) {
-      adsDebugEnabled = true;
-      nextAdsDebugTimeMs = millis();
-      Serial.println(F("ads debug enabled: raw samples print at 8 Hz while acquisition is on"));
+    if (startAdsAcquisitionIfNeeded()) {
+        adsDebugEnabled = true;
+        nextAdsDebugTimeMs = millis();
+        Serial.println(F("ads debug enabled: raw samples print at 8 Hz while acquisition is on"));
     }
   } else if (command == "ads debug off") {
-    if (!streamingEnabled) {
-      adsDebugEnabled = false;
-      Serial.println(F("ads debug disabled"));
-    }
+    adsDebugEnabled = false;
+    Serial.println(F("ads debug disabled"));
+  } else if (command == "ads stream start") {
+    startAdsBinaryStream();
+  } else if (command == "ads stream stop") {
+    stopAdsBinaryStream(adsBinaryStoppedForCommand);
 #endif
   } else if (command == "sim on") {
 #if ENABLE_ADS1293
@@ -175,7 +231,7 @@ void handleCommand(const String& rawCommand) {
     Serial.print(F("unknown command: "));
     Serial.println(rawCommand);
 #if ENABLE_ADS1293
-    Serial.println(F("commands: ads status, ads start, ads stop, ads read, ads debug on, ads debug off, status"));
+    Serial.println(F("commands: ads status, ads start, ads stop, ads read, ads debug on, ads debug off, ads stream start, ads stream stop, status"));
 #else
     Serial.println(F("commands: start, stop, status, sim on, sim off"));
 #endif
@@ -216,7 +272,38 @@ void pollAdsDebug() {
 
 void sendDueSamples() {
 #if ENABLE_ADS1293
-  return;
+  if (!streamingEnabled || adsDebugEnabled ||
+      !adsReader.isAcquisitionEnabled()) {
+    return;
+  }
+
+  const uint32_t nowUs = micros();
+  if (static_cast<int32_t>(nowUs - nextSampleTimeUs) < 0) {
+    return;
+  }
+
+  // ADS1293 is configured at 256 SPS; output is gated to the existing
+  // 250 Hz packet cadence, effectively dropping the small surplus safely.
+  ADS1293Reader::RawSample rawSample;
+  if (adsReader.readRawSample(rawSample)) {
+    const ECGSample sample = {
+        rawSample.leadIRaw,
+        rawSample.leadIIRaw,
+        rawSample.leadIIIRaw,
+    };
+    ECGPacket::writeSample(ecgOutputStream(),
+                           sampleSequence,
+                           nowUs,
+                           sample,
+                           0x00);
+    ++sampleSequence;
+  }
+
+  nextSampleTimeUs += Config::ECG_SAMPLE_INTERVAL_US;
+
+  if (static_cast<int32_t>(micros() - nextSampleTimeUs) > 0) {
+    nextSampleTimeUs = micros() + Config::ECG_SAMPLE_INTERVAL_US;
+  }
 #else
   if (!streamingEnabled) {
     return;

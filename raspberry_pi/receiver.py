@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import struct
 import sys
 import time
 from typing import Any
@@ -14,11 +15,14 @@ import yaml
 from data_preparer import prepare_frame_array
 from ecg_buffer import ECGRingBuffer
 from metadata_store import MetadataStore
-from packet_parser import PacketParser
+from packet_parser import HEADER_SIZE, PAYLOAD_SIZE, SYNC, VERSION, PacketParser
 from window_exporter import WindowExporter
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
+DEFAULT_COMMAND_DELAY_SEC = 0.25
+DEFAULT_BINARY_DETECT_TIMEOUT_SEC = 8.0
+DISALLOWED_START_COMMANDS = {"ads read", "ads debug on"}
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -64,6 +68,25 @@ def main() -> int:
     read_size_bytes = int(serial_config.get("read_size_bytes", 1024))
     startup_delay_sec = float(serial_config.get("startup_delay_sec", 3.0))
     flush_on_start = bool(serial_config.get("flush_on_start", True))
+    source = str(config.get("source", serial_config.get("source", "dummy"))).lower()
+    send_start_commands = bool(
+        config.get("send_start_commands", serial_config.get("send_start_commands", False))
+    )
+    start_commands = normalize_start_commands(config.get("start_commands", []))
+    command_delay_sec = float(
+        config.get(
+            "command_delay_sec",
+            serial_config.get("command_delay_sec", DEFAULT_COMMAND_DELAY_SEC),
+        )
+    )
+    binary_detect_timeout_sec = float(
+        config.get(
+            "binary_detect_timeout_sec",
+            serial_config.get(
+                "binary_detect_timeout_sec", DEFAULT_BINARY_DETECT_TIMEOUT_SEC
+            ),
+        )
+    )
 
     sample_rate_hz = int(sampling_config.get("sample_rate_hz", 250))
     frame_seconds = int(sampling_config.get("frame_seconds", 10))
@@ -94,7 +117,7 @@ def main() -> int:
 
     print(
         "ECGRHYTHMIA Phase 2 receiver "
-        f"port={port} baudrate={baudrate} frame_size={frame_size}"
+        f"port={port} baudrate={baudrate} frame_size={frame_size} source={source}"
     )
 
     try:
@@ -107,8 +130,23 @@ def main() -> int:
             if flush_on_start:
                 serial_port.reset_input_buffer()
 
+            startup_data = b""
+            if send_start_commands:
+                send_serial_start_commands(
+                    serial_port, start_commands, command_delay_sec
+                )
+                startup_data = wait_for_binary_stream(
+                    serial_port,
+                    read_size_bytes,
+                    binary_detect_timeout_sec,
+                )
+
             while True:
-                data = serial_port.read(read_size_bytes)
+                if startup_data:
+                    data = startup_data
+                    startup_data = b""
+                else:
+                    data = serial_port.read(read_size_bytes)
                 if data:
                     packets = parser.feed(data)
                     for packet in packets:
@@ -166,6 +204,12 @@ def main() -> int:
 def disable_modem_control(serial_port: serial.Serial) -> None:
     """Disable USB serial DTR/RTS lines when the adapter exposes them."""
 
+    for attribute_name in ("dtr", "rts"):
+        try:
+            setattr(serial_port, attribute_name, False)
+        except (AttributeError, OSError, ValueError, serial.SerialException):
+            continue
+
     for setter_name in ("setDTR", "setRTS"):
         setter = getattr(serial_port, setter_name, None)
         if setter is None:
@@ -174,6 +218,91 @@ def disable_modem_control(serial_port: serial.Serial) -> None:
             setter(False)
         except (OSError, ValueError, serial.SerialException):
             continue
+
+
+def normalize_start_commands(raw_commands: Any) -> list[str]:
+    if raw_commands is None:
+        return []
+    if not isinstance(raw_commands, list):
+        raise ValueError("start_commands must be a YAML list")
+
+    commands: list[str] = []
+    for raw_command in raw_commands:
+        command = str(raw_command).strip()
+        if command:
+            commands.append(command)
+    return commands
+
+
+def send_serial_start_commands(
+    serial_port: serial.Serial, commands: list[str], command_delay_sec: float
+) -> None:
+    for command in commands:
+        normalized = command.lower()
+        if normalized in DISALLOWED_START_COMMANDS:
+            print(f"skipped unsafe startup command: {command}")
+            continue
+
+        serial_port.write(f"{command}\r\n".encode("utf-8"))
+        serial_port.flush()
+        print(f"sent {command}")
+        if command_delay_sec > 0:
+            time.sleep(command_delay_sec)
+
+
+def wait_for_binary_stream(
+    serial_port: serial.Serial,
+    read_size_bytes: int,
+    detect_timeout_sec: float,
+) -> bytes:
+    deadline = time.monotonic() + detect_timeout_sec
+    buffer = bytearray()
+
+    while time.monotonic() < deadline:
+        data = serial_port.read(read_size_bytes)
+        if not data:
+            continue
+
+        buffer.extend(data)
+        header_index = find_binary_header(buffer)
+        if header_index is not None:
+            if header_index > 0:
+                del buffer[:header_index]
+            print("binary stream detected")
+            return bytes(buffer)
+
+        trim_to_possible_sync(buffer)
+
+    print("warning: binary stream not detected before timeout; continuing parser")
+    return b""
+
+
+def find_binary_header(buffer: bytearray) -> int | None:
+    search_from = 0
+    while True:
+        sync_index = buffer.find(SYNC, search_from)
+        if sync_index < 0:
+            return None
+        if len(buffer) - sync_index < HEADER_SIZE:
+            return None
+
+        version = buffer[sync_index + 2]
+        payload_size = struct.unpack_from("<H", buffer, sync_index + 3)[0]
+        if version == VERSION and payload_size == PAYLOAD_SIZE:
+            return sync_index
+
+        search_from = sync_index + 1
+
+
+def trim_to_possible_sync(buffer: bytearray) -> None:
+    if len(buffer) <= HEADER_SIZE:
+        return
+
+    last_possible_sync = buffer.rfind(SYNC[:1])
+    if last_possible_sync >= 0:
+        del buffer[:last_possible_sync]
+    else:
+        buffer.clear()
 
 
 if __name__ == "__main__":
