@@ -21,7 +21,19 @@ from window_exporter import WindowExporter
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
 DEFAULT_COMMAND_DELAY_SEC = 0.25
-DEFAULT_BINARY_DETECT_TIMEOUT_SEC = 8.0
+DEFAULT_ADS1293_BOOT_DELAY_SEC = 6.0
+DEFAULT_STREAM_DETECT_TIMEOUT_SEC = 5.0
+DEFAULT_STARTUP_RETRIES = 3
+DEFAULT_ADS1293_START_COMMANDS = [
+    "ads debug off",
+    "ads stop",
+    "ads start",
+    "ads stream start",
+]
+ADS1293_RETRY_COMMANDS = [
+    "ads start",
+    "ads stream start",
+]
 DISALLOWED_START_COMMANDS = {"ads read", "ads debug on"}
 
 
@@ -69,22 +81,40 @@ def main() -> int:
     startup_delay_sec = float(serial_config.get("startup_delay_sec", 3.0))
     flush_on_start = bool(serial_config.get("flush_on_start", True))
     source = str(config.get("source", serial_config.get("source", "dummy"))).lower()
+    is_ads1293_source = source == "ads1293"
     send_start_commands = bool(
         config.get("send_start_commands", serial_config.get("send_start_commands", False))
     )
     start_commands = normalize_start_commands(config.get("start_commands", []))
+    if is_ads1293_source and not start_commands:
+        start_commands = list(DEFAULT_ADS1293_START_COMMANDS)
+    ads1293_boot_delay_sec = float(
+        config.get(
+            "ads1293_boot_delay_sec",
+            serial_config.get(
+                "ads1293_boot_delay_sec", DEFAULT_ADS1293_BOOT_DELAY_SEC
+            ),
+        )
+    )
+    boot_delay_sec = ads1293_boot_delay_sec if is_ads1293_source else startup_delay_sec
     command_delay_sec = float(
         config.get(
             "command_delay_sec",
             serial_config.get("command_delay_sec", DEFAULT_COMMAND_DELAY_SEC),
         )
     )
-    binary_detect_timeout_sec = float(
+    stream_detect_timeout_sec = float(
         config.get(
-            "binary_detect_timeout_sec",
+            "stream_detect_timeout_sec",
             serial_config.get(
-                "binary_detect_timeout_sec", DEFAULT_BINARY_DETECT_TIMEOUT_SEC
+                "stream_detect_timeout_sec", DEFAULT_STREAM_DETECT_TIMEOUT_SEC
             ),
+        )
+    )
+    startup_retries = int(
+        config.get(
+            "startup_retries",
+            serial_config.get("startup_retries", DEFAULT_STARTUP_RETRIES),
         )
     )
 
@@ -125,20 +155,35 @@ def main() -> int:
             port=port, baudrate=baudrate, timeout=timeout_seconds
         ) as serial_port:
             disable_modem_control(serial_port)
-            if startup_delay_sec > 0:
-                time.sleep(startup_delay_sec)
-            if flush_on_start:
+            if boot_delay_sec > 0:
+                print(f"waiting {boot_delay_sec:.1f}s for device boot")
+                time.sleep(boot_delay_sec)
+            if flush_on_start or is_ads1293_source:
                 serial_port.reset_input_buffer()
 
             startup_data = b""
-            if send_start_commands:
+            if is_ads1293_source and send_start_commands:
+                startup_data = start_ads1293_binary_stream(
+                    serial_port=serial_port,
+                    start_commands=start_commands,
+                    command_delay_sec=command_delay_sec,
+                    read_size_bytes=read_size_bytes,
+                    detect_timeout_sec=stream_detect_timeout_sec,
+                    startup_retries=startup_retries,
+                )
+                if not startup_data:
+                    print(
+                        "error: ADS1293 binary stream was not detected "
+                        "after startup retries"
+                    )
+                    return 2
+                # Drop all startup text from parser state; the first valid
+                # packet becomes the sequence baseline.
+                parser = PacketParser()
+                last_status_time = time.monotonic()
+            elif send_start_commands:
                 send_serial_start_commands(
                     serial_port, start_commands, command_delay_sec
-                )
-                startup_data = wait_for_binary_stream(
-                    serial_port,
-                    read_size_bytes,
-                    binary_detect_timeout_sec,
                 )
 
             while True:
@@ -238,16 +283,60 @@ def send_serial_start_commands(
     serial_port: serial.Serial, commands: list[str], command_delay_sec: float
 ) -> None:
     for command in commands:
-        normalized = command.lower()
-        if normalized in DISALLOWED_START_COMMANDS:
-            print(f"skipped unsafe startup command: {command}")
-            continue
+        send_serial_command(serial_port, command, command_delay_sec)
 
-        serial_port.write(f"{command}\r\n".encode("utf-8"))
-        serial_port.flush()
-        print(f"sent {command}")
-        if command_delay_sec > 0:
-            time.sleep(command_delay_sec)
+
+def send_serial_command(
+    serial_port: serial.Serial, command: str, command_delay_sec: float
+) -> bool:
+    normalized = command.lower()
+    if normalized in DISALLOWED_START_COMMANDS:
+        print(f"skipped unsafe startup command: {command}")
+        return False
+
+    serial_port.write(f"{command}\r\n".encode("utf-8"))
+    serial_port.flush()
+    print(f"sent {command}")
+    if command_delay_sec > 0:
+        time.sleep(command_delay_sec)
+    return True
+
+
+def start_ads1293_binary_stream(
+    serial_port: serial.Serial,
+    start_commands: list[str],
+    command_delay_sec: float,
+    read_size_bytes: int,
+    detect_timeout_sec: float,
+    startup_retries: int,
+) -> bytes:
+    attempts = max(1, startup_retries)
+
+    for attempt in range(1, attempts + 1):
+        print(f"ADS1293 startup attempt {attempt}/{attempts}")
+        if attempt == 1:
+            send_serial_start_commands(serial_port, start_commands, command_delay_sec)
+        else:
+            send_serial_command(serial_port, "ads stop", command_delay_sec)
+            try:
+                serial_port.reset_input_buffer()
+            except (OSError, ValueError, serial.SerialException):
+                pass
+            send_serial_start_commands(
+                serial_port, ADS1293_RETRY_COMMANDS, command_delay_sec
+            )
+
+        startup_data = wait_for_binary_stream(
+            serial_port, read_size_bytes, detect_timeout_sec
+        )
+        if startup_data:
+            return startup_data
+
+        if attempt < attempts:
+            print("binary stream not detected, retrying")
+
+    print("binary stream not detected")
+    return b""
 
 
 def wait_for_binary_stream(
@@ -273,7 +362,6 @@ def wait_for_binary_stream(
 
         trim_to_possible_sync(buffer)
 
-    print("warning: binary stream not detected before timeout; continuing parser")
     return b""
 
 

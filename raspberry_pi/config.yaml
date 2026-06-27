@@ -8,8 +8,12 @@ serial:
 
 source: ads1293
 send_start_commands: true
+ads1293_boot_delay_sec: 6.0
+stream_detect_timeout_sec: 5.0
+startup_retries: 3
 start_commands:
   - "ads debug off"
+  - "ads stop"
   - "ads start"
   - "ads stream start"
 
