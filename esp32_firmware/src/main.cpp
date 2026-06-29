@@ -114,6 +114,15 @@ void printAdsRawSampleOnce(const __FlashStringHelper* prefix) {
 }
 
 bool startAdsAcquisitionIfNeeded() {
+  if (!adsReader.isConfigured()) {
+    Serial.println(F("ADS1293 not configured; retrying setup"));
+    if (!adsReader.begin()) {
+      Serial.println(adsReader.lastMessage());
+      return false;
+    }
+    Serial.println(adsReader.lastMessage());
+  }
+
   if (adsReader.isAcquisitionEnabled()) {
     return true;
   }
@@ -192,9 +201,9 @@ void handleCommand(const String& rawCommand) {
     printStatus();
   } else if (command == "ads start") {
     streamingEnabled = false;
-    adsReader.startAcquisition();
-    nextAdsDebugTimeMs = millis();
-    Serial.println(adsReader.lastMessage());
+    if (startAdsAcquisitionIfNeeded()) {
+      nextAdsDebugTimeMs = millis();
+    }
   } else if (command == "ads stop") {
     stopAllAdsOutput();
   } else if (command == "ads read") {

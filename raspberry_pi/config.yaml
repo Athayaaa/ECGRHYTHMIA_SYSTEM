@@ -11,6 +11,8 @@ send_start_commands: true
 ads1293_boot_delay_sec: 6.0
 stream_detect_timeout_sec: 5.0
 startup_retries: 3
+serial_session_retries: 2
+serial_reopen_delay_sec: 1.0
 start_commands:
   - "ads debug off"
   - "ads stop"

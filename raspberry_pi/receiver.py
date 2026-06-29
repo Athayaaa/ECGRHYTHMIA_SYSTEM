@@ -24,6 +24,8 @@ DEFAULT_COMMAND_DELAY_SEC = 0.25
 DEFAULT_ADS1293_BOOT_DELAY_SEC = 6.0
 DEFAULT_STREAM_DETECT_TIMEOUT_SEC = 5.0
 DEFAULT_STARTUP_RETRIES = 3
+DEFAULT_SERIAL_SESSION_RETRIES = 2
+DEFAULT_SERIAL_REOPEN_DELAY_SEC = 1.0
 DEFAULT_ADS1293_START_COMMANDS = [
     "ads debug off",
     "ads stop",
@@ -117,6 +119,22 @@ def main() -> int:
             serial_config.get("startup_retries", DEFAULT_STARTUP_RETRIES),
         )
     )
+    serial_session_retries = int(
+        config.get(
+            "serial_session_retries",
+            serial_config.get(
+                "serial_session_retries", DEFAULT_SERIAL_SESSION_RETRIES
+            ),
+        )
+    )
+    serial_reopen_delay_sec = float(
+        config.get(
+            "serial_reopen_delay_sec",
+            serial_config.get(
+                "serial_reopen_delay_sec", DEFAULT_SERIAL_REOPEN_DELAY_SEC
+            ),
+        )
+    )
 
     sample_rate_hz = int(sampling_config.get("sample_rate_hz", 250))
     frame_seconds = int(sampling_config.get("frame_seconds", 10))
@@ -150,93 +168,121 @@ def main() -> int:
         f"port={port} baudrate={baudrate} frame_size={frame_size} source={source}"
     )
 
+    serial_session_count = (
+        max(1, serial_session_retries)
+        if is_ads1293_source and send_start_commands
+        else 1
+    )
+    serial_session_attempt = 1
+
     try:
-        with serial.Serial(
-            port=port, baudrate=baudrate, timeout=timeout_seconds
-        ) as serial_port:
-            disable_modem_control(serial_port)
-            if boot_delay_sec > 0:
-                print(f"waiting {boot_delay_sec:.1f}s for device boot")
-                time.sleep(boot_delay_sec)
-            if flush_on_start or is_ads1293_source:
-                serial_port.reset_input_buffer()
-
-            startup_data = b""
-            if is_ads1293_source and send_start_commands:
-                startup_data = start_ads1293_binary_stream(
-                    serial_port=serial_port,
-                    start_commands=start_commands,
-                    command_delay_sec=command_delay_sec,
-                    read_size_bytes=read_size_bytes,
-                    detect_timeout_sec=stream_detect_timeout_sec,
-                    startup_retries=startup_retries,
+        while serial_session_attempt <= serial_session_count:
+            if serial_session_count > 1:
+                print(
+                    "serial startup session "
+                    f"{serial_session_attempt}/{serial_session_count}"
                 )
-                if not startup_data:
-                    print(
-                        "error: ADS1293 binary stream was not detected "
-                        "after startup retries"
+            if serial_session_attempt > 1 and serial_reopen_delay_sec > 0:
+                print(
+                    "waiting "
+                    f"{serial_reopen_delay_sec:.1f}s before reopening serial port"
+                )
+                time.sleep(serial_reopen_delay_sec)
+
+            with serial.Serial(
+                port=port, baudrate=baudrate, timeout=timeout_seconds
+            ) as serial_port:
+                disable_modem_control(serial_port)
+                if boot_delay_sec > 0:
+                    print(f"waiting {boot_delay_sec:.1f}s for device boot")
+                    time.sleep(boot_delay_sec)
+                if flush_on_start or is_ads1293_source:
+                    serial_port.reset_input_buffer()
+
+                startup_data = b""
+                if is_ads1293_source and send_start_commands:
+                    startup_data = start_ads1293_binary_stream(
+                        serial_port=serial_port,
+                        start_commands=start_commands,
+                        command_delay_sec=command_delay_sec,
+                        read_size_bytes=read_size_bytes,
+                        detect_timeout_sec=stream_detect_timeout_sec,
+                        startup_retries=startup_retries,
                     )
-                    return 2
-                # Drop all startup text from parser state; the first valid
-                # packet becomes the sequence baseline.
-                parser = PacketParser()
-                last_status_time = time.monotonic()
-            elif send_start_commands:
-                send_serial_start_commands(
-                    serial_port, start_commands, command_delay_sec
-                )
-
-            while True:
-                if startup_data:
-                    data = startup_data
-                    startup_data = b""
-                else:
-                    data = serial_port.read(read_size_bytes)
-                if data:
-                    packets = parser.feed(data)
-                    for packet in packets:
-                        exporter.append_raw_packet(packet)
-                        ring_buffer.append(packet)
-
-                        if (
-                            ring_buffer.is_full
-                            and ring_buffer.total_samples % frame_size == 0
-                        ):
-                            frame_index += 1
-                            frame = ring_buffer.snapshot()
-                            samples = prepare_frame_array(
-                                frame.samples, sample_rate_hz, frame_seconds
-                            )
-                            paths = exporter.export_frame(
-                                frame_index=frame_index,
-                                frame=frame,
-                                samples=samples,
-                                metadata={"parser_stats": parser.stats.as_dict()},
-                            )
-                            metadata_store.insert_frame(
-                                paths.metadata, paths.metadata_path.name
-                            )
+                    if not startup_data:
+                        if serial_session_attempt < serial_session_count:
                             print(
-                                f"exported frame {frame_index:06d}: "
-                                f"{paths.csv_path}, {paths.bin_path}, "
-                                f"{paths.npy_path}, "
-                                f"{paths.metadata_path}"
+                                "ADS1293 stream not detected; "
+                                "reopening serial port"
                             )
+                            serial_session_attempt += 1
+                            continue
 
-                            if args.max_frames and frame_index >= args.max_frames:
-                                return 0
-
-                now = time.monotonic()
-                if now - last_status_time >= status_interval_seconds:
-                    stats = parser.stats.as_dict()
-                    print(
-                        "status "
-                        f"ok={stats['packets_ok']} "
-                        f"crc_errors={stats['crc_errors']} "
-                        f"loss={stats['packet_loss_count']} "
-                        f"out_of_order={stats['out_of_order_count']}"
+                        print(
+                            "error: ADS1293 binary stream was not detected "
+                            "after startup retries"
+                        )
+                        return 2
+                    # Drop all startup text from parser state; the first valid
+                    # packet becomes the sequence baseline.
+                    parser = PacketParser()
+                    last_status_time = time.monotonic()
+                elif send_start_commands:
+                    send_serial_start_commands(
+                        serial_port, start_commands, command_delay_sec
                     )
-                    last_status_time = now
+
+                while True:
+                    if startup_data:
+                        data = startup_data
+                        startup_data = b""
+                    else:
+                        data = serial_port.read(read_size_bytes)
+                    if data:
+                        packets = parser.feed(data)
+                        for packet in packets:
+                            exporter.append_raw_packet(packet)
+                            ring_buffer.append(packet)
+
+                            if (
+                                ring_buffer.is_full
+                                and ring_buffer.total_samples % frame_size == 0
+                            ):
+                                frame_index += 1
+                                frame = ring_buffer.snapshot()
+                                samples = prepare_frame_array(
+                                    frame.samples, sample_rate_hz, frame_seconds
+                                )
+                                paths = exporter.export_frame(
+                                    frame_index=frame_index,
+                                    frame=frame,
+                                    samples=samples,
+                                    metadata={"parser_stats": parser.stats.as_dict()},
+                                )
+                                metadata_store.insert_frame(
+                                    paths.metadata, paths.metadata_path.name
+                                )
+                                print(
+                                    f"exported frame {frame_index:06d}: "
+                                    f"{paths.csv_path}, {paths.bin_path}, "
+                                    f"{paths.npy_path}, "
+                                    f"{paths.metadata_path}"
+                                )
+
+                                if args.max_frames and frame_index >= args.max_frames:
+                                    return 0
+
+                    now = time.monotonic()
+                    if now - last_status_time >= status_interval_seconds:
+                        stats = parser.stats.as_dict()
+                        print(
+                            "status "
+                            f"ok={stats['packets_ok']} "
+                            f"crc_errors={stats['crc_errors']} "
+                            f"loss={stats['packet_loss_count']} "
+                            f"out_of_order={stats['out_of_order_count']}"
+                        )
+                        last_status_time = now
 
     except KeyboardInterrupt:
         print("receiver stopped")
