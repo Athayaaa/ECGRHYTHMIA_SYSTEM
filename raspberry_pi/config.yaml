@@ -13,6 +13,10 @@ stream_detect_timeout_sec: 5.0
 startup_retries: 3
 serial_session_retries: 2
 serial_reopen_delay_sec: 1.0
+ads1293_ready_check_timeout_sec: 3.0
+ads1293_ready_poll_interval_sec: 0.5
+ads1293_status_read_timeout_sec: 0.8
+ads1293_require_drdy_pin: true
 start_commands:
   - "ads debug off"
   - "ads stop"

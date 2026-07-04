@@ -8,6 +8,10 @@ ADS1293Reader::ADS1293Reader()
 
 bool ADS1293Reader::begin() {
 #if ENABLE_ADS1293
+  pinMode(Config::ADS1293_DRDY_PIN, INPUT_PULLUP);
+  pinMode(Config::ADS1293_SPI_CS_PIN, OUTPUT);
+  digitalWrite(Config::ADS1293_SPI_CS_PIN, HIGH);
+
   ads_.begin(Config::ADS1293_SPI_SCLK_PIN,
              Config::ADS1293_SPI_MISO_PIN,
              Config::ADS1293_SPI_MOSI_PIN);
@@ -46,6 +50,8 @@ bool ADS1293Reader::begin() {
   configured_ = false;
   acquisitionEnabled_ = false;
   dataReady_ = false;
+  registerDataReady_ = false;
+  drdyPinAsserted_ = false;
   deviceId_ = 0;
   errorStatus_ = 0;
   lastMessage_ = "ADS1293 support is not enabled in this build";
@@ -103,7 +109,7 @@ bool ADS1293Reader::refreshStatus() {
 
   deviceId_ = ads_.readDeviceID();
   errorStatus_ = ads_.readErrorStatus();
-  dataReady_ = ads_.isDataReady();
+  refreshDataReadyStatus();
   return true;
 #else
   return false;
@@ -122,8 +128,8 @@ bool ADS1293Reader::readRawSample(RawSample& sample) {
     return false;
   }
 
-  dataReady_ = ads_.isDataReady();
   errorStatus_ = ads_.readErrorStatus();
+  refreshDataReadyStatus();
   sample.dataReady = dataReady_;
   sample.errorStatus = errorStatus_;
 
@@ -132,19 +138,14 @@ bool ADS1293Reader::readRawSample(RawSample& sample) {
     return false;
   }
 
-  uint32_t leadIRaw24 = 0;
-  uint32_t leadIIRaw24 = 0;
-  bool ok = true;
-  ok &= ads_.getRaw24(1, leadIRaw24);
-  ok &= ads_.getRaw24(2, leadIIRaw24);
-
-  if (!ok) {
-    lastMessage_ = "ADS1293 raw channel read failed";
+  const ADS1293::Samples ecg = ads_.getECGData();
+  if (!ecg.ok) {
+    lastMessage_ = "ADS1293 ECG data read failed";
     return false;
   }
 
-  sample.leadIRaw = ADS1293::signExtend24(leadIRaw24);
-  sample.leadIIRaw = ADS1293::signExtend24(leadIIRaw24);
+  sample.leadIRaw = ecg.ch1;
+  sample.leadIIRaw = ecg.ch2;
   sample.leadIIIRaw = sample.leadIIRaw - sample.leadIRaw;
   sample.errorStatus = ads_.readErrorStatus();
   errorStatus_ = sample.errorStatus;
@@ -189,7 +190,13 @@ void ADS1293Reader::printStatus(Stream& stream) const {
   stream.print(F("  error_status="));
   printHexByte(stream, errorStatus_);
   stream.println();
+  stream.print(F("  register_data_ready="));
+  stream.println(registerDataReady_ ? F("yes") : F("no"));
+  stream.print(F("  drdy_pin="));
+  stream.println(drdyPinAsserted_ ? F("low/asserted") : F("high/idle"));
   stream.print(F("  data_ready="));
+  stream.println(drdyPinAsserted_ ? F("yes") : F("no"));
+  stream.print(F("  sample_ready="));
   stream.println(dataReady_ ? F("yes") : F("no"));
   if (deviceId_ == 0x00 || deviceId_ == 0xFF) {
     stream.println(F("  wiring_note=device_id 0x00/0xFF usually means ADS1293 is absent or SPI wiring is not ready"));
@@ -206,7 +213,7 @@ void ADS1293Reader::printRawSample(Stream& stream,
   stream.print(static_cast<long>(sample.leadIIRaw));
   stream.print(F(" lead_iii_raw="));
   stream.print(static_cast<long>(sample.leadIIIRaw));
-  stream.print(F(" data_ready="));
+  stream.print(F(" sample_ready="));
   stream.print(sample.dataReady ? F("yes") : F("no"));
   stream.print(F(" error_status="));
   printHexByte(stream, sample.errorStatus);
@@ -223,6 +230,17 @@ bool ADS1293Reader::isAcquisitionEnabled() const {
 
 const char* ADS1293Reader::lastMessage() const {
   return lastMessage_;
+}
+
+bool ADS1293Reader::refreshDataReadyStatus() {
+#if ENABLE_ADS1293
+  registerDataReady_ = ads_.isDataReady();
+  drdyPinAsserted_ = digitalRead(Config::ADS1293_DRDY_PIN) == LOW;
+  dataReady_ = registerDataReady_ || drdyPinAsserted_;
+  return true;
+#else
+  return false;
+#endif
 }
 
 void ADS1293Reader::printHexByte(Stream& stream, uint8_t value) {

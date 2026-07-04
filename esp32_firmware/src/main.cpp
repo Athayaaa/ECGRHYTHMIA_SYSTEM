@@ -21,6 +21,9 @@ uint32_t nextAdsDebugTimeMs = 0;
 #endif
 uint32_t sampleSequence = 0;
 uint32_t nextSampleTimeUs = 0;
+uint32_t lastPacketSentTimeMs = 0;
+uint32_t heartBlinkCycleStartMs = 0;
+bool heartBlinkLedOn = false;
 String commandBuffer;
 
 Stream& ecgOutputStream() {
@@ -40,9 +43,72 @@ void beginEcgOutputTransport() {
 #endif
 }
 
+void setHeartBlinkLed(bool on) {
+  if (!Config::HEART_BLINK_ENABLED) {
+    return;
+  }
+
+  digitalWrite(Config::HEART_BLINK_GPIO, on ? HIGH : LOW);
+  heartBlinkLedOn = on;
+}
+
+void beginHeartBlinkIndicator() {
+  if (!Config::HEART_BLINK_ENABLED) {
+    return;
+  }
+
+  pinMode(Config::HEART_BLINK_GPIO, OUTPUT);
+  setHeartBlinkLed(false);
+  heartBlinkCycleStartMs = millis();
+}
+
+void notePacketSent() {
+  if (!Config::HEART_BLINK_ENABLED) {
+    return;
+  }
+
+  const uint32_t nowMs = millis();
+  lastPacketSentTimeMs = nowMs;
+  if (heartBlinkCycleStartMs == 0) {
+    heartBlinkCycleStartMs = nowMs;
+  }
+}
+
+void pollHeartBlinkIndicator() {
+  if (!Config::HEART_BLINK_ENABLED) {
+    return;
+  }
+
+  const uint32_t nowMs = millis();
+  const bool packetRecentlySent =
+      lastPacketSentTimeMs != 0 &&
+      static_cast<int32_t>(nowMs - lastPacketSentTimeMs) <=
+          static_cast<int32_t>(Config::HEART_BLINK_ACTIVE_TIMEOUT_MS);
+
+  if (!packetRecentlySent) {
+    setHeartBlinkLed(false);
+    heartBlinkCycleStartMs = nowMs;
+    return;
+  }
+
+  if (static_cast<int32_t>(nowMs - heartBlinkCycleStartMs) >=
+      static_cast<int32_t>(Config::HEART_BLINK_PERIOD_MS)) {
+    heartBlinkCycleStartMs = nowMs;
+  }
+
+  const bool pulseOn =
+      static_cast<int32_t>(nowMs - heartBlinkCycleStartMs) <
+      static_cast<int32_t>(Config::HEART_BLINK_ON_MS);
+  if (pulseOn != heartBlinkLedOn) {
+    setHeartBlinkLed(pulseOn);
+  }
+}
+
 void printStatus() {
   Serial.println();
   Serial.println(F("ECGRHYTHMIA ESP32 firmware"));
+  Serial.print(F("board="));
+  Serial.println(Config::BOARD_NAME);
   Serial.print(F("phase="));
 #if ENABLE_ADS1293
   Serial.println(F("3C ADS1293 binary stream"));
@@ -67,6 +133,12 @@ void printStatus() {
   Serial.println(Config::ECG_UART_RX_PIN);
   Serial.print(F("packet_bytes="));
   Serial.println(ECGPacket::PACKET_SIZE);
+  Serial.print(F("heart_blink_gpio="));
+  if (Config::HEART_BLINK_ENABLED) {
+    Serial.println(Config::HEART_BLINK_GPIO);
+  } else {
+    Serial.println(F("disabled"));
+  }
 #if ENABLE_ADS1293
   adsReader.refreshStatus();
   adsReader.printStatus(Serial);
@@ -95,7 +167,7 @@ void printAdsSampleUnavailable(const __FlashStringHelper* prefix,
   Serial.print(F(": "));
   Serial.println(adsReader.lastMessage());
   Serial.print(prefix);
-  Serial.print(F(" state data_ready="));
+  Serial.print(F(" state sample_ready="));
   Serial.print(sample.dataReady ? F("yes") : F("no"));
   Serial.print(F(" error_status=0x"));
   if (sample.errorStatus < 0x10) {
@@ -300,11 +372,13 @@ void sendDueSamples() {
         rawSample.leadIIRaw,
         rawSample.leadIIIRaw,
     };
-    ECGPacket::writeSample(ecgOutputStream(),
-                           sampleSequence,
-                           nowUs,
-                           sample,
-                           0x00);
+    if (ECGPacket::writeSample(ecgOutputStream(),
+                               sampleSequence,
+                               nowUs,
+                               sample,
+                               0x00)) {
+      notePacketSent();
+    }
     ++sampleSequence;
   }
 
@@ -327,11 +401,13 @@ void sendDueSamples() {
       dummyGenerator.nextSample(sampleSequence, simulationEnabled);
   const uint8_t flags = simulationEnabled ? 0x01 : 0x00;
 
-  ECGPacket::writeSample(ecgOutputStream(),
-                         sampleSequence,
-                         nowUs,
-                         sample,
-                         flags);
+  if (ECGPacket::writeSample(ecgOutputStream(),
+                             sampleSequence,
+                             nowUs,
+                             sample,
+                             flags)) {
+    notePacketSent();
+  }
   ++sampleSequence;
   nextSampleTimeUs += Config::ECG_SAMPLE_INTERVAL_US;
 
@@ -344,6 +420,7 @@ void sendDueSamples() {
 void setup() {
   Serial.begin(Config::USB_SERIAL_BAUD);
   beginEcgOutputTransport();
+  beginHeartBlinkIndicator();
 
   nextSampleTimeUs = micros();
   delay(300);
@@ -359,4 +436,5 @@ void loop() {
   pollAdsDebug();
 #endif
   sendDueSamples();
+  pollHeartBlinkIndicator();
 }

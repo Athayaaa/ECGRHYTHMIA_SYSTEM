@@ -26,6 +26,10 @@ DEFAULT_STREAM_DETECT_TIMEOUT_SEC = 5.0
 DEFAULT_STARTUP_RETRIES = 3
 DEFAULT_SERIAL_SESSION_RETRIES = 2
 DEFAULT_SERIAL_REOPEN_DELAY_SEC = 1.0
+DEFAULT_READY_CHECK_TIMEOUT_SEC = 3.0
+DEFAULT_READY_POLL_INTERVAL_SEC = 0.5
+DEFAULT_STATUS_READ_TIMEOUT_SEC = 0.8
+DEFAULT_REQUIRE_DRDY_PIN = True
 DEFAULT_ADS1293_START_COMMANDS = [
     "ads debug off",
     "ads stop",
@@ -34,8 +38,8 @@ DEFAULT_ADS1293_START_COMMANDS = [
 ]
 ADS1293_RETRY_COMMANDS = [
     "ads start",
-    "ads stream start",
 ]
+ADS1293_STREAM_START_COMMAND = "ads stream start"
 DISALLOWED_START_COMMANDS = {"ads read", "ads debug on"}
 
 
@@ -135,6 +139,39 @@ def main() -> int:
             ),
         )
     )
+    ads1293_ready_check_timeout_sec = float(
+        config.get(
+            "ads1293_ready_check_timeout_sec",
+            serial_config.get(
+                "ads1293_ready_check_timeout_sec",
+                DEFAULT_READY_CHECK_TIMEOUT_SEC,
+            ),
+        )
+    )
+    ads1293_ready_poll_interval_sec = float(
+        config.get(
+            "ads1293_ready_poll_interval_sec",
+            serial_config.get(
+                "ads1293_ready_poll_interval_sec",
+                DEFAULT_READY_POLL_INTERVAL_SEC,
+            ),
+        )
+    )
+    ads1293_status_read_timeout_sec = float(
+        config.get(
+            "ads1293_status_read_timeout_sec",
+            serial_config.get(
+                "ads1293_status_read_timeout_sec",
+                DEFAULT_STATUS_READ_TIMEOUT_SEC,
+            ),
+        )
+    )
+    ads1293_require_drdy_pin = bool(
+        config.get(
+            "ads1293_require_drdy_pin",
+            serial_config.get("ads1293_require_drdy_pin", DEFAULT_REQUIRE_DRDY_PIN),
+        )
+    )
 
     sample_rate_hz = int(sampling_config.get("sample_rate_hz", 250))
     frame_seconds = int(sampling_config.get("frame_seconds", 10))
@@ -208,6 +245,10 @@ def main() -> int:
                         read_size_bytes=read_size_bytes,
                         detect_timeout_sec=stream_detect_timeout_sec,
                         startup_retries=startup_retries,
+                        ready_check_timeout_sec=ads1293_ready_check_timeout_sec,
+                        ready_poll_interval_sec=ads1293_ready_poll_interval_sec,
+                        status_read_timeout_sec=ads1293_status_read_timeout_sec,
+                        require_drdy_pin=ads1293_require_drdy_pin,
                     )
                     if not startup_data:
                         if serial_session_attempt < serial_session_count:
@@ -219,8 +260,8 @@ def main() -> int:
                             continue
 
                         print(
-                            "error: ADS1293 binary stream was not detected "
-                            "after startup retries"
+                            "error: ADS1293 was not data-ready or binary "
+                            "stream was not detected after startup retries"
                         )
                         return 2
                     # Drop all startup text from parser state; the first valid
@@ -355,13 +396,32 @@ def start_ads1293_binary_stream(
     read_size_bytes: int,
     detect_timeout_sec: float,
     startup_retries: int,
+    ready_check_timeout_sec: float,
+    ready_poll_interval_sec: float,
+    status_read_timeout_sec: float,
+    require_drdy_pin: bool,
 ) -> bytes:
     attempts = max(1, startup_retries)
+    pre_stream_commands = [
+        command
+        for command in start_commands
+        if command.lower() != ADS1293_STREAM_START_COMMAND
+    ]
+    stream_start_command = next(
+        (
+            command
+            for command in start_commands
+            if command.lower() == ADS1293_STREAM_START_COMMAND
+        ),
+        ADS1293_STREAM_START_COMMAND,
+    )
 
     for attempt in range(1, attempts + 1):
         print(f"ADS1293 startup attempt {attempt}/{attempts}")
         if attempt == 1:
-            send_serial_start_commands(serial_port, start_commands, command_delay_sec)
+            send_serial_start_commands(
+                serial_port, pre_stream_commands, command_delay_sec
+            )
         else:
             send_serial_command(serial_port, "ads stop", command_delay_sec)
             try:
@@ -372,6 +432,20 @@ def start_ads1293_binary_stream(
                 serial_port, ADS1293_RETRY_COMMANDS, command_delay_sec
             )
 
+        if not wait_for_ads1293_ready(
+            serial_port=serial_port,
+            command_delay_sec=command_delay_sec,
+            read_size_bytes=read_size_bytes,
+            ready_check_timeout_sec=ready_check_timeout_sec,
+            ready_poll_interval_sec=ready_poll_interval_sec,
+            status_read_timeout_sec=status_read_timeout_sec,
+            require_drdy_pin=require_drdy_pin,
+        ):
+            if attempt < attempts:
+                print("ADS1293 data not ready, retrying startup")
+            continue
+
+        send_serial_command(serial_port, stream_start_command, command_delay_sec)
         startup_data = wait_for_binary_stream(
             serial_port, read_size_bytes, detect_timeout_sec
         )
@@ -383,6 +457,124 @@ def start_ads1293_binary_stream(
 
     print("binary stream not detected")
     return b""
+
+
+def wait_for_ads1293_ready(
+    serial_port: serial.Serial,
+    command_delay_sec: float,
+    read_size_bytes: int,
+    ready_check_timeout_sec: float,
+    ready_poll_interval_sec: float,
+    status_read_timeout_sec: float,
+    require_drdy_pin: bool,
+) -> bool:
+    deadline = time.monotonic() + max(0.0, ready_check_timeout_sec)
+
+    while True:
+        try:
+            serial_port.reset_input_buffer()
+        except (OSError, ValueError, serial.SerialException):
+            pass
+
+        if not send_serial_command(serial_port, "ads status", command_delay_sec):
+            return False
+
+        response = read_serial_text(
+            serial_port=serial_port,
+            read_size_bytes=read_size_bytes,
+            read_timeout_sec=status_read_timeout_sec,
+        )
+        status = parse_ads1293_status(response)
+        print_ads1293_readiness(status)
+
+        if ads1293_status_is_ready(status, require_drdy_pin):
+            return True
+
+        if time.monotonic() >= deadline:
+            print("ADS1293 DRDY not asserted; binary stream start skipped")
+            return False
+
+        if ready_poll_interval_sec > 0:
+            time.sleep(ready_poll_interval_sec)
+
+
+def read_serial_text(
+    serial_port: serial.Serial,
+    read_size_bytes: int,
+    read_timeout_sec: float,
+) -> str:
+    deadline = time.monotonic() + max(0.0, read_timeout_sec)
+    response = bytearray()
+
+    while time.monotonic() < deadline:
+        data = serial_port.read(read_size_bytes)
+        if data:
+            response.extend(data)
+
+    return response.decode("utf-8", errors="replace")
+
+
+def parse_ads1293_status(response: str) -> dict[str, str]:
+    keys = {
+        "device_id",
+        "error_status",
+        "register_data_ready",
+        "data_ready",
+        "sample_ready",
+        "drdy_pin",
+        "acquisition",
+        "configured",
+        "message",
+    }
+    status: dict[str, str] = {}
+
+    for raw_line in response.splitlines():
+        line = raw_line.strip()
+        if "=" in line:
+            key, value = line.split("=", 1)
+        elif ":" in line:
+            key, value = line.split(":", 1)
+        else:
+            continue
+
+        key = key.strip()
+        value = value.strip()
+        if key in keys:
+            status[key] = value
+
+    return status
+
+
+def ads1293_status_is_ready(status: dict[str, str], require_drdy_pin: bool) -> bool:
+    data_ready = status.get("data_ready", "").lower()
+    register_data_ready = status.get("register_data_ready", "").lower()
+    sample_ready = status.get("sample_ready", "").lower()
+    drdy_pin = status.get("drdy_pin", "").lower()
+    if require_drdy_pin and drdy_pin:
+        return drdy_pin.startswith("low")
+    return (
+        data_ready == "yes"
+        or register_data_ready == "yes"
+        or sample_ready == "yes"
+        or drdy_pin.startswith("low")
+    )
+
+
+def print_ads1293_readiness(status: dict[str, str]) -> None:
+    if not status:
+        print("ADS1293 readiness: status response not parsed")
+        return
+
+    parts = [
+        f"data_ready={status.get('data_ready', 'unknown')}",
+        f"register_data_ready={status.get('register_data_ready', 'unknown')}",
+        f"sample_ready={status.get('sample_ready', 'unknown')}",
+        f"drdy_pin={status.get('drdy_pin', 'unknown')}",
+        f"acquisition={status.get('acquisition', 'unknown')}",
+        f"device_id={status.get('device_id', 'unknown')}",
+        f"error_status={status.get('error_status', 'unknown')}",
+    ]
+    print("ADS1293 readiness: " + " ".join(parts))
 
 
 def wait_for_binary_stream(

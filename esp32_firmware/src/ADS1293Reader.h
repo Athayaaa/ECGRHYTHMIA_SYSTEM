@@ -42,9 +42,12 @@ class ADS1293Reader {
   bool configured_ = false;
   bool acquisitionEnabled_ = false;
   bool dataReady_ = false;
+  bool registerDataReady_ = false;
+  bool drdyPinAsserted_ = false;
   uint8_t deviceId_ = 0;
   uint8_t errorStatus_ = 0;
   const char* lastMessage_ = "ADS1293 support is not enabled in this build";
 
+  bool refreshDataReadyStatus();
   static void printHexByte(Stream& stream, uint8_t value);
 };
