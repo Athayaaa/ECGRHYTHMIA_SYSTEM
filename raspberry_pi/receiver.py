@@ -12,11 +12,16 @@ from typing import Any
 import serial
 import yaml
 
+from calibration_utils import (
+    convert_raw_to_mv,
+    load_calibration_config,
+    write_calibrated_frame,
+)
 from data_preparer import prepare_frame_array
 from ecg_buffer import ECGRingBuffer
 from metadata_store import MetadataStore
 from packet_parser import HEADER_SIZE, PAYLOAD_SIZE, SYNC, VERSION, PacketParser
-from window_exporter import WindowExporter
+from window_exporter import FrameExportPaths, WindowExporter
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
@@ -188,6 +193,14 @@ def main() -> int:
     sqlite_db_path = Path(sqlite_db_name)
     if not sqlite_db_path.is_absolute():
         sqlite_db_path = output_dir / sqlite_db_path
+    calibration_config_path = Path(
+        output_config.get("calibration_config", "calibration_config.yaml")
+    )
+    if not calibration_config_path.is_absolute():
+        calibration_config_path = config_path.parent / calibration_config_path
+    calibrated_output_dir = Path(output_config.get("calibrated_directory", "calibrated"))
+    if not calibrated_output_dir.is_absolute():
+        calibrated_output_dir = output_dir / calibrated_output_dir
     status_interval_seconds = float(runtime_config.get("status_interval_seconds", 5))
     device_id = str(device_config.get("device_id", "esp32dev_dummy"))
     state = str(device_config.get("state", "stored"))
@@ -309,6 +322,13 @@ def main() -> int:
                                     f"{paths.npy_path}, "
                                     f"{paths.metadata_path}"
                                 )
+                                try_export_calibrated_frame(
+                                    calibration_config_path=calibration_config_path,
+                                    calibrated_output_dir=calibrated_output_dir,
+                                    raw_export=paths,
+                                    samples=samples,
+                                    sample_rate_hz=sample_rate_hz,
+                                )
 
                                 if args.max_frames and frame_index >= args.max_frames:
                                     return 0
@@ -350,6 +370,44 @@ def disable_modem_control(serial_port: serial.Serial) -> None:
             setter(False)
         except (OSError, ValueError, serial.SerialException):
             continue
+
+
+def try_export_calibrated_frame(
+    calibration_config_path: Path,
+    calibrated_output_dir: Path,
+    raw_export: FrameExportPaths,
+    samples,
+    sample_rate_hz: int,
+) -> None:
+    if not calibration_config_path.exists():
+        return
+
+    try:
+        calibration = load_calibration_config(calibration_config_path)
+        samples_mv = convert_raw_to_mv(samples, calibration)
+        paths = write_calibrated_frame(
+            output_dir=calibrated_output_dir,
+            stem=raw_export.csv_path.stem,
+            samples_mv=samples_mv,
+            sample_rate_hz=sample_rate_hz,
+            calibration=calibration,
+            source_metadata=raw_export.metadata,
+            source_files={
+                "csv": str(raw_export.csv_path),
+                "bin": str(raw_export.bin_path),
+                "npy": str(raw_export.npy_path),
+                "json": str(raw_export.metadata_path),
+            },
+        )
+    except Exception as error:
+        print(f"warning: calibrated mV export skipped: {error}", file=sys.stderr)
+        return
+
+    print(
+        "exported calibrated frame "
+        f"{raw_export.csv_path.stem}: {paths.csv_path}, {paths.npy_path}, "
+        f"{paths.json_path}"
+    )
 
 
 def normalize_start_commands(raw_commands: Any) -> list[str]:
