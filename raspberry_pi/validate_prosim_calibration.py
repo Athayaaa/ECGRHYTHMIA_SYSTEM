@@ -20,11 +20,10 @@ from calibration_utils import (
     convert_raw_to_mv,
     count_nan_inf,
     count_saturation,
-    estimate_bpm,
     find_complete_frame_sets,
     load_calibration_config,
     load_json,
-    robust_peak_to_peak,
+    measure_rpeak_baseline_amplitude,
 )
 
 
@@ -97,7 +96,7 @@ def status_from_checks(
     nan_inf_count: int,
     raw_ch3_error: float,
     mv_ch3_error: float,
-    peak_count: int,
+    beats_accepted: int,
 ) -> tuple[str, list[str]]:
     failures: list[str] = []
     warnings: list[str] = []
@@ -110,11 +109,15 @@ def status_from_checks(
         failures.append(f"raw Lead III max error {raw_ch3_error:.6g} count")
     if mv_ch3_error > CH3_CONSISTENCY_TOLERANCE_MV:
         failures.append(f"mV Lead III max error {mv_ch3_error:.6g} mV")
-    if peak_count < 2 or not np.isfinite(bpm):
+    if beats_accepted < 2 or not np.isfinite(bpm):
         failures.append("BPM estimation found fewer than 2 R peaks")
 
-    amplitude_relative_error = abs(amplitude_mV - expected_mV) / expected_mV
-    bpm_error = abs(bpm - expected_bpm)
+    amplitude_relative_error = (
+        abs(amplitude_mV - expected_mV) / expected_mV
+        if np.isfinite(amplitude_mV)
+        else float("inf")
+    )
+    bpm_error = abs(bpm - expected_bpm) if np.isfinite(bpm) else float("inf")
 
     if amplitude_relative_error > FAIL_AMPLITUDE_RELATIVE_ERROR:
         failures.append(
@@ -156,20 +159,38 @@ def main() -> int:
         raw_ch3_error = ch3_max_error(raw_samples)
         saturation_count = count_saturation(raw_samples)
 
-        if nan_inf_count:
+        if nan_inf_count or raw_ch3_error > CH3_CONSISTENCY_TOLERANCE_COUNTS:
             samples_mv = np.empty_like(raw_samples, dtype=np.float32)
             samples_mv.fill(np.nan)
+            amplitude_mV = float("nan")
+            amplitude_mad_mV = float("nan")
+            bpm = float("nan")
+            beats_detected = 0
+            beats_accepted = 0
+            beats_rejected = 0
+            mv_ch3_error = float("nan")
         else:
             samples_mv = convert_raw_to_mv(raw_samples, calibration)
+            rpeak = measure_rpeak_baseline_amplitude(
+                samples=samples_mv,
+                sample_rate_hz=sample_rate_hz,
+                expected_bpm=float(args.expected_bpm),
+                lead="lead_ii",
+            )
+            amplitude_mV = rpeak.median_amplitude
+            amplitude_mad_mV = rpeak.amplitude_mad
+            bpm = rpeak.estimated_bpm
+            beats_detected = rpeak.beats_detected
+            beats_accepted = rpeak.beats_accepted
+            beats_rejected = rpeak.beats_rejected
+            mv_ch3_error = ch3_max_error(samples_mv)
 
-        amplitude_mV, lower_mV, upper_mV = robust_peak_to_peak(
-            samples=samples_mv,
-            lead="lead_ii",
-            lower_percentile=1.0,
-            upper_percentile=99.0,
+        amplitude_error_percent = (
+            100.0 * (amplitude_mV - float(args.expected_mv)) / float(args.expected_mv)
+            if np.isfinite(amplitude_mV)
+            else float("inf")
         )
-        bpm, peak_count = estimate_bpm(samples_mv, sample_rate_hz, lead="lead_ii")
-        mv_ch3_error = ch3_max_error(samples_mv)
+        bpm_error = bpm - float(args.expected_bpm) if np.isfinite(bpm) else float("inf")
 
         status, messages = status_from_checks(
             amplitude_mV=amplitude_mV,
@@ -180,7 +201,7 @@ def main() -> int:
             nan_inf_count=nan_inf_count,
             raw_ch3_error=raw_ch3_error,
             mv_ch3_error=mv_ch3_error,
-            peak_count=peak_count,
+            beats_accepted=beats_accepted,
         )
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError, CalibrationError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
@@ -189,14 +210,16 @@ def main() -> int:
     print(f"validation_dataset: {input_dir}")
     print(f"frames_used: {', '.join(frame_stems)}")
     print(f"sample_rate_hz: {sample_rate_hz}")
-    print(
-        "measured_reference_amplitude_mV: "
-        f"{amplitude_mV:.6g} (p1={lower_mV:.6g}, p99={upper_mV:.6g})"
-    )
+    print(f"measured_reference_amplitude_mV: {amplitude_mV:.6g}")
+    print(f"amplitude_mad_mV: {amplitude_mad_mV:.6g}")
     print(f"expected_reference_amplitude_mV: {float(args.expected_mv):.6g}")
+    print(f"amplitude_error_percent: {amplitude_error_percent:.6g}")
     print(f"estimated_bpm: {bpm:.6g}")
     print(f"expected_bpm: {float(args.expected_bpm):.6g}")
-    print(f"r_peak_count: {peak_count}")
+    print(f"bpm_error: {bpm_error:.6g}")
+    print(f"beats_detected: {beats_detected}")
+    print(f"beats_accepted: {beats_accepted}")
+    print(f"beats_rejected: {beats_rejected}")
     print(f"saturation_count: {saturation_count}")
     print(f"nan_inf_count: {nan_inf_count}")
     print(

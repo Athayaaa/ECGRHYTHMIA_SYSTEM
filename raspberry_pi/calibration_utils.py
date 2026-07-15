@@ -55,6 +55,35 @@ class CalibratedExportPaths:
     json_path: Path
 
 
+@dataclass(frozen=True)
+class RPeakBaselineResult:
+    amplitudes: np.ndarray
+    accepted_amplitudes: np.ndarray
+    rejected_amplitudes: np.ndarray
+    peak_indices: np.ndarray
+    accepted_peak_indices: np.ndarray
+    rejected_peak_indices: np.ndarray
+    median_amplitude: float
+    amplitude_mad: float
+    estimated_bpm: float
+    detection_threshold: float
+    baseline_window_samples: tuple[int, int]
+    min_peak_distance_samples: int
+    polarity: int
+
+    @property
+    def beats_detected(self) -> int:
+        return int(self.peak_indices.size)
+
+    @property
+    def beats_accepted(self) -> int:
+        return int(self.accepted_amplitudes.size)
+
+    @property
+    def beats_rejected(self) -> int:
+        return int(self.beats_detected - self.beats_accepted)
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
@@ -258,6 +287,166 @@ def robust_peak_to_peak(
     lower = float(np.percentile(detrended, lower_percentile))
     upper = float(np.percentile(detrended, upper_percentile))
     return upper - lower, lower, upper
+
+
+def moving_average(values: np.ndarray, window_samples: int) -> np.ndarray:
+    window = max(3, int(window_samples) | 1)
+    pad = window // 2
+    padded = np.pad(values.astype(np.float64), (pad, pad), mode="edge")
+    kernel = np.ones(window, dtype=np.float64) / float(window)
+    return np.convolve(padded, kernel, mode="valid")
+
+
+def detrend_for_peak_detection(values: np.ndarray, sample_rate_hz: int) -> np.ndarray:
+    baseline_window = max(3, int(round(0.80 * sample_rate_hz)))
+    smooth_window = max(3, int(round(0.04 * sample_rate_hz)))
+    slow_baseline = moving_average(values, baseline_window)
+    return moving_average(values - slow_baseline, smooth_window)
+
+
+def detect_r_peaks(
+    samples: np.ndarray,
+    sample_rate_hz: int,
+    expected_bpm: float,
+    lead: str = "lead_ii",
+) -> tuple[np.ndarray, float, int, int]:
+    if sample_rate_hz <= 0:
+        raise CalibrationError("sample_rate_hz must be positive")
+    if not np.isfinite(expected_bpm) or expected_bpm <= 0.0:
+        raise CalibrationError("expected_bpm must be a finite positive number")
+    if lead not in LEAD_TO_INDEX:
+        raise CalibrationError(f"unknown lead {lead}")
+    if samples.ndim != 2 or samples.shape[1] != 3:
+        raise CalibrationError(f"samples shape is {samples.shape}, expected Nx3")
+
+    values = samples[:, LEAD_TO_INDEX[lead]].astype(np.float64)
+    if count_nan_inf(values):
+        raise CalibrationError("samples contain NaN/Inf values")
+
+    detrended = detrend_for_peak_detection(values, sample_rate_hz)
+    p1, p90, p99 = np.percentile(detrended, [1.0, 90.0, 99.0])
+    polarity = -1 if abs(p1) > abs(p99) else 1
+    detector_signal = detrended * polarity
+    detector_p90 = float(np.percentile(detector_signal, 90.0))
+    detector_p99 = float(np.percentile(detector_signal, 99.0))
+    detector_max = float(np.max(detector_signal))
+    threshold = max(detector_p90, 0.35 * detector_p99, 0.25 * detector_max)
+    min_distance = max(
+        1,
+        int(round((60.0 / float(expected_bpm)) * float(sample_rate_hz) * 0.60)),
+    )
+
+    peaks: list[int] = []
+    for index in range(1, len(detector_signal) - 1):
+        if (
+            detector_signal[index] >= threshold
+            and detector_signal[index] >= detector_signal[index - 1]
+            and detector_signal[index] > detector_signal[index + 1]
+        ):
+            if not peaks or index - peaks[-1] >= min_distance:
+                peaks.append(index)
+            elif detector_signal[index] > detector_signal[peaks[-1]]:
+                peaks[-1] = index
+
+    return np.asarray(peaks, dtype=np.int64), threshold, min_distance, polarity
+
+
+def estimate_bpm_from_peaks(
+    peak_indices: np.ndarray, sample_rate_hz: int, sample_count: int
+) -> float:
+    if peak_indices.size >= 2:
+        rr_samples = np.diff(peak_indices.astype(np.float64))
+        return 60.0 * float(sample_rate_hz) / float(np.median(rr_samples))
+    if sample_count > 0 and sample_rate_hz > 0:
+        duration_minutes = sample_count / float(sample_rate_hz) / 60.0
+        return peak_indices.size / duration_minutes if duration_minutes > 0.0 else float("nan")
+    return float("nan")
+
+
+def measure_rpeak_baseline_amplitude(
+    samples: np.ndarray,
+    sample_rate_hz: int,
+    expected_bpm: float,
+    lead: str = "lead_ii",
+) -> RPeakBaselineResult:
+    peaks, threshold, min_distance, polarity = detect_r_peaks(
+        samples=samples,
+        sample_rate_hz=sample_rate_hz,
+        expected_bpm=expected_bpm,
+        lead=lead,
+    )
+    values = samples[:, LEAD_TO_INDEX[lead]].astype(np.float64)
+    baseline_start = int(round(0.20 * sample_rate_hz))
+    baseline_end = int(round(0.08 * sample_rate_hz))
+
+    amplitudes: list[float] = []
+    amplitude_peaks: list[int] = []
+    rejected_amplitudes: list[float] = []
+    rejected_peaks: list[int] = []
+
+    for peak in peaks:
+        start = max(0, int(peak) - baseline_start)
+        end = max(0, int(peak) - baseline_end)
+        if end <= start:
+            rejected_amplitudes.append(float("nan"))
+            rejected_peaks.append(int(peak))
+            continue
+
+        local_baseline = float(np.median(values[start:end]))
+        amplitude = float(values[int(peak)] - local_baseline)
+        if polarity < 0:
+            amplitude *= -1.0
+        amplitudes.append(amplitude)
+        amplitude_peaks.append(int(peak))
+
+    amplitude_array = np.asarray(amplitudes, dtype=np.float64)
+    amplitude_peak_array = np.asarray(amplitude_peaks, dtype=np.int64)
+    if amplitude_array.size == 0:
+        raise CalibrationError("no R-peaks had enough pre-QRS baseline samples")
+
+    finite_positive = amplitude_array[np.isfinite(amplitude_array) & (amplitude_array > 0.0)]
+    if finite_positive.size == 0:
+        raise CalibrationError("no positive R-peak baseline amplitudes were found")
+
+    raw_median = float(np.median(finite_positive))
+    raw_mad = float(np.median(np.abs(finite_positive - raw_median)))
+    rejection_margin = max(6.0 * raw_mad, 0.20 * abs(raw_median), 1.0)
+    accepted_mask = (
+        np.isfinite(amplitude_array)
+        & (amplitude_array > 0.0)
+        & (np.abs(amplitude_array - raw_median) <= rejection_margin)
+    )
+
+    accepted = amplitude_array[accepted_mask]
+    accepted_peaks = amplitude_peak_array[accepted_mask]
+    rejected_from_outlier = amplitude_array[~accepted_mask]
+    rejected_from_outlier_peaks = amplitude_peak_array[~accepted_mask]
+    if rejected_from_outlier.size:
+        rejected_amplitudes.extend(float(value) for value in rejected_from_outlier)
+        rejected_peaks.extend(int(value) for value in rejected_from_outlier_peaks)
+
+    if accepted.size == 0:
+        raise CalibrationError("all R-peak baseline amplitudes were rejected")
+
+    median_amplitude = float(np.median(accepted))
+    amplitude_mad = float(np.median(np.abs(accepted - median_amplitude)))
+    estimated_bpm = estimate_bpm_from_peaks(peaks, sample_rate_hz, samples.shape[0])
+
+    return RPeakBaselineResult(
+        amplitudes=amplitude_array,
+        accepted_amplitudes=accepted,
+        rejected_amplitudes=np.asarray(rejected_amplitudes, dtype=np.float64),
+        peak_indices=peaks,
+        accepted_peak_indices=accepted_peaks,
+        rejected_peak_indices=np.asarray(rejected_peaks, dtype=np.int64),
+        median_amplitude=median_amplitude,
+        amplitude_mad=amplitude_mad,
+        estimated_bpm=estimated_bpm,
+        detection_threshold=float(threshold),
+        baseline_window_samples=(baseline_start, baseline_end),
+        min_peak_distance_samples=int(min_distance),
+        polarity=int(polarity),
+    )
 
 
 def lead_summary(samples: np.ndarray) -> dict[str, dict[str, float]]:
