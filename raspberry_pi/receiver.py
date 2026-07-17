@@ -13,6 +13,7 @@ import serial
 import yaml
 
 from calibration_utils import (
+    CalibratedExportPaths,
     convert_raw_to_mv,
     load_calibration_config,
     write_calibrated_frame,
@@ -20,6 +21,7 @@ from calibration_utils import (
 from data_preparer import prepare_frame_array
 from ecg_buffer import ECGRingBuffer
 from metadata_store import MetadataStore
+from model_input_utils import DEFAULT_MAX_ABS_MV, prepare_model_input_file
 from packet_parser import HEADER_SIZE, PAYLOAD_SIZE, SYNC, VERSION, PacketParser
 from window_exporter import FrameExportPaths, WindowExporter
 
@@ -84,6 +86,7 @@ def main() -> int:
     output_config = config.get("output", {})
     runtime_config = config.get("runtime", {})
     device_config = config.get("device", {})
+    model_ready_config = config.get("model_ready_export", {})
 
     port = args.port or serial_config.get("port", "/dev/ttyUSB0")
     baudrate = args.baudrate or int(serial_config.get("baudrate", 115200))
@@ -201,6 +204,24 @@ def main() -> int:
     calibrated_output_dir = Path(output_config.get("calibrated_directory", "calibrated"))
     if not calibrated_output_dir.is_absolute():
         calibrated_output_dir = output_dir / calibrated_output_dir
+    model_ready_enabled = bool(model_ready_config.get("enabled", False))
+    model_ready_output_dir = Path(model_ready_config.get("output_dir", "data/model_ready"))
+    if not model_ready_output_dir.is_absolute():
+        model_ready_output_dir = config_path.parent / model_ready_output_dir
+    model_ready_max_abs_mv = float(
+        model_ready_config.get("max_abs_mv", DEFAULT_MAX_ABS_MV)
+    )
+    preprocessing_config_value = model_ready_config.get("preprocessing_config")
+    model_ready_preprocessing_config_path = (
+        Path(preprocessing_config_value) if preprocessing_config_value else None
+    )
+    if (
+        model_ready_preprocessing_config_path is not None
+        and not model_ready_preprocessing_config_path.is_absolute()
+    ):
+        model_ready_preprocessing_config_path = (
+            config_path.parent / model_ready_preprocessing_config_path
+        )
     status_interval_seconds = float(runtime_config.get("status_interval_seconds", 5))
     device_id = str(device_config.get("device_id", "esp32dev_dummy"))
     state = str(device_config.get("state", "stored"))
@@ -322,13 +343,22 @@ def main() -> int:
                                     f"{paths.npy_path}, "
                                     f"{paths.metadata_path}"
                                 )
-                                try_export_calibrated_frame(
+                                calibrated_paths = try_export_calibrated_frame(
                                     calibration_config_path=calibration_config_path,
                                     calibrated_output_dir=calibrated_output_dir,
                                     raw_export=paths,
                                     samples=samples,
                                     sample_rate_hz=sample_rate_hz,
                                 )
+                                if model_ready_enabled and calibrated_paths is not None:
+                                    try_export_model_ready_frame(
+                                        calibrated_paths=calibrated_paths,
+                                        model_ready_output_dir=model_ready_output_dir,
+                                        max_abs_mv=model_ready_max_abs_mv,
+                                        preprocessing_config_path=(
+                                            model_ready_preprocessing_config_path
+                                        ),
+                                    )
 
                                 if args.max_frames and frame_index >= args.max_frames:
                                     return 0
@@ -378,9 +408,9 @@ def try_export_calibrated_frame(
     raw_export: FrameExportPaths,
     samples,
     sample_rate_hz: int,
-) -> None:
+) -> CalibratedExportPaths | None:
     if not calibration_config_path.exists():
-        return
+        return None
 
     try:
         calibration = load_calibration_config(calibration_config_path)
@@ -401,12 +431,39 @@ def try_export_calibrated_frame(
         )
     except Exception as error:
         print(f"warning: calibrated mV export skipped: {error}", file=sys.stderr)
-        return
+        return None
 
     print(
         "exported calibrated frame "
         f"{raw_export.csv_path.stem}: {paths.csv_path}, {paths.npy_path}, "
         f"{paths.json_path}"
+    )
+    return paths
+
+
+def try_export_model_ready_frame(
+    calibrated_paths: CalibratedExportPaths,
+    model_ready_output_dir: Path,
+    max_abs_mv: float,
+    preprocessing_config_path: Path | None,
+) -> None:
+    try:
+        prepared = prepare_model_input_file(
+            input_path=calibrated_paths.npy_path,
+            metadata_path=calibrated_paths.json_path,
+            output_dir=model_ready_output_dir,
+            max_abs_mV=max_abs_mv,
+            overwrite=True,
+            preprocessing_config_path=preprocessing_config_path,
+        )
+    except Exception as error:
+        print(f"warning: model-ready export skipped: {error}", file=sys.stderr)
+        return
+
+    print(
+        "exported model-ready frame "
+        f"{prepared.frame_id}: {prepared.paths.npy_path}, "
+        f"{prepared.paths.metadata_path}"
     )
 
 

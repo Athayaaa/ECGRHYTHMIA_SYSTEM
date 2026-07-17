@@ -38,3 +38,8 @@ runtime:
 device:
   device_id: esp32dev_dummy
   state: stored
+
+model_ready_export:
+  enabled: false
+  output_dir: data/model_ready
+  max_abs_mv: 10.0

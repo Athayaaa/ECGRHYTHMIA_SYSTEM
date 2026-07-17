@@ -12,6 +12,16 @@ venv/
 # Data hasil pengujian
 data/
 raspberry_pi/data/
+data/replay/
+data/model_ready*/
+data/calibrated*/
+data/validation_reports/
+raspberry_pi/data/replay/
+raspberry_pi/data/model_ready*/
+raspberry_pi/data/calibrated*/
+raspberry_pi/data/validation_reports/
+data_kalibrasi/
+../data_kalibrasi/
 *.csv
 *.npy
 *.bin
