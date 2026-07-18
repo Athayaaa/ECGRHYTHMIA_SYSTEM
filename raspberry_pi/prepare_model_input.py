@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--max-abs-mv", type=float, default=DEFAULT_MAX_ABS_MV)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--allow-legacy",
+        action="store_true",
+        help="Explicitly allow a LEGACY_EXPLICIT 640-to-250 V1 calibrated frame",
+    )
     parser.add_argument("--preprocessing-config", type=Path)
     return parser.parse_args()
 
@@ -38,6 +43,7 @@ def main() -> int:
             output_dir=args.output_dir.resolve(),
             max_abs_mV=float(args.max_abs_mv),
             overwrite=bool(args.overwrite),
+            allow_legacy=bool(args.allow_legacy),
             preprocessing_config_path=(
                 args.preprocessing_config.resolve()
                 if args.preprocessing_config is not None

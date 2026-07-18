@@ -49,6 +49,60 @@ bool ECGPacket::writeSample(Stream& stream,
   return stream.write(packet, packetLength) == packetLength;
 }
 
+size_t ECGPacket::encodeNativeSampleV2(uint8_t* buffer,
+                                       size_t bufferLength,
+                                       uint32_t nativeSequence,
+                                       uint32_t timestampUs,
+                                       uint32_t leadIOffsetCode,
+                                       uint32_t leadIIOffsetCode,
+                                       uint8_t flags,
+                                       uint32_t diagnostic) {
+  if (buffer == nullptr || bufferLength < PACKET_SIZE) {
+    return 0;
+  }
+
+  size_t offset = 0;
+  buffer[offset++] = SYNC_0;
+  buffer[offset++] = SYNC_1;
+  buffer[offset++] = VERSION_V2;
+  writeU16LE(buffer, offset, PAYLOAD_SIZE);
+
+  writeU32LE(buffer, offset, nativeSequence);
+  writeU32LE(buffer, offset, timestampUs);
+  writeU16LE(buffer, offset, SAMPLE_COUNT);
+  writeU16LE(buffer, offset, NATIVE_RATE_NUMERATOR);
+  buffer[offset++] = flags;
+  writeU32LE(buffer, offset, leadIOffsetCode);
+  writeU32LE(buffer, offset, leadIIOffsetCode);
+  writeU32LE(buffer, offset, diagnostic);
+
+  const uint16_t crc = CRC16::compute(buffer, offset);
+  writeU16LE(buffer, offset, crc);
+  return offset;
+}
+
+bool ECGPacket::writeNativeSampleV2(Stream& stream,
+                                    uint32_t nativeSequence,
+                                    uint32_t timestampUs,
+                                    uint32_t leadIOffsetCode,
+                                    uint32_t leadIIOffsetCode,
+                                    uint8_t flags,
+                                    uint32_t diagnostic) {
+  uint8_t packet[PACKET_SIZE];
+  const size_t packetLength = encodeNativeSampleV2(packet,
+                                                    sizeof(packet),
+                                                    nativeSequence,
+                                                    timestampUs,
+                                                    leadIOffsetCode,
+                                                    leadIIOffsetCode,
+                                                    flags,
+                                                    diagnostic);
+  if (packetLength == 0) {
+    return false;
+  }
+  return stream.write(packet, packetLength) == packetLength;
+}
+
 void ECGPacket::writeU16LE(uint8_t* buffer, size_t& offset, uint16_t value) {
   buffer[offset++] = static_cast<uint8_t>(value & 0xFF);
   buffer[offset++] = static_cast<uint8_t>((value >> 8) & 0xFF);

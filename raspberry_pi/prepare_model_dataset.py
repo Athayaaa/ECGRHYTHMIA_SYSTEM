@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--max-abs-mv", type=float, default=DEFAULT_MAX_ABS_MV)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--allow-legacy",
+        action="store_true",
+        help="Explicitly allow LEGACY_EXPLICIT 640-to-250 V1 calibrated frames",
+    )
     parser.add_argument("--preprocessing-config", type=Path)
     return parser.parse_args()
 
@@ -101,10 +106,20 @@ def manifest_row_from_failure(
     }
 
 
-def write_manifest(output_dir: Path, rows: list[dict[str, object]]) -> Path:
+def write_manifest(
+    output_dir: Path,
+    rows: list[dict[str, object]],
+    *,
+    overwrite: bool = False,
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = output_dir / "dataset_manifest.csv"
-    with manifest_path.open("w", encoding="utf-8", newline="") as handle:
+    if manifest_path.exists() and not overwrite:
+        raise ModelInputError(
+            f"dataset manifest already exists: {manifest_path}; use --overwrite explicitly"
+        )
+    mode = "w" if overwrite else "x"
+    with manifest_path.open(mode, encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=MANIFEST_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
@@ -121,6 +136,15 @@ def main() -> int:
     failed = 0
 
     try:
+        if (
+            output_dir.exists()
+            and not bool(args.overwrite)
+            and any(output_dir.iterdir())
+        ):
+            raise ModelInputError(
+                f"model dataset output directory is not empty: {output_dir}; "
+                "use a new directory or --overwrite explicitly"
+            )
         for npy_path in sorted(input_dir.glob("frame_*_mv.npy")):
             metadata_path = npy_path.with_suffix(".json")
             if not metadata_path.exists():
@@ -135,6 +159,7 @@ def main() -> int:
                     output_dir=output_dir,
                     max_abs_mV=float(args.max_abs_mv),
                     overwrite=bool(args.overwrite),
+                    allow_legacy=bool(args.allow_legacy),
                     preprocessing_config_path=(
                         args.preprocessing_config.resolve()
                         if args.preprocessing_config is not None
@@ -149,8 +174,12 @@ def main() -> int:
                 rows.append(manifest_row_from_failure(npy_path, output_dir, str(error)))
                 print(f"failed {npy_path.name}: {error}")
 
-        manifest_path = write_manifest(output_dir, rows)
-    except OSError as error:
+        manifest_path = write_manifest(
+            output_dir,
+            rows,
+            overwrite=bool(args.overwrite),
+        )
+    except (OSError, ModelInputError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
 

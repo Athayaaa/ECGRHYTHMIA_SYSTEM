@@ -1,5 +1,12 @@
 # Phase 3E Streamlit Calibration Guide
 
+> **LEGACY 640-TO-250 PIPELINE ONLY:** The Streamlit implementation retains
+> historical signed-24-bit rail checks and writes `calibration_config.yaml`.
+> It must not be used to validate or calibrate corrected protocol V2 unsigned
+> offset-code frames. Follow `raspberry_pi/ADS1293_CORRECTED_PIPELINE.md` and
+> `raspberry_pi/CALIBRATION_MIGRATION.md` for corrected acquisition. The new
+> datasheet-nominal conversion remains preliminary and still needs ProSim.
+
 Panduan ini dipakai untuk membuka GUI kalibrasi ADS1293, melihat frame ECG terbaru, mengatur konversi raw count ke mV, dan mengekspor data terkalibrasi.
 
 GUI ini hanya membaca file dari `raspberry_pi/data`. GUI tidak membuka serial port dan tidak mengubah format packet, CRC, frame shape, atau format export receiver.

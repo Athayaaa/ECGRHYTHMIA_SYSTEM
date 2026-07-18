@@ -13,31 +13,45 @@ from typing import Any
 import numpy as np
 import yaml
 
+from ads1293_session import verify_persisted_session_metadata
 from calibration_utils import (
     CHANNELS,
     CH3_CONSISTENCY_TOLERANCE_COUNTS,
+    CORRECTED_PIPELINE_PROFILE,
+    LEGACY_PIPELINE_PROFILE,
     CalibrationError,
     RPeakBaselineResult,
     compute_offsets,
-    count_saturation,
     find_complete_frame_sets,
     latest_n_frames,
     lead_summary,
     load_raw_frame,
     load_yaml,
     measure_rpeak_baseline_amplitude,
+    offset_code_range_stats,
+    pipeline_profile_parameters,
+    require_calibration_compatible,
+    require_corrected_frame_provenance,
+    require_frame_session_link,
+    require_frame_output_sample_rate,
     robust_peak_to_peak,
 )
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = SCRIPT_DIR / "config.yaml"
-DEFAULT_OUTPUT_PATH = SCRIPT_DIR / "calibration_config.yaml"
 DEFAULT_LOWER_PERCENTILE = 1.0
 DEFAULT_UPPER_PERCENTILE = 99.0
 DEFAULT_MIN_AMPLITUDE_COUNT = 100.0
 DEFAULT_WARN_AMPLITUDE_COUNT = 1000.0
 METHODS = ("rpeak_baseline", "multipoint_rpeak", "robust_pp")
+PIPELINE_PROFILES = (CORRECTED_PIPELINE_PROFILE, LEGACY_PIPELINE_PROFILE)
+PROTECTED_CALIBRATION_OUTPUTS = frozenset(
+    {
+        (SCRIPT_DIR / "calibration_config.yaml").resolve(),
+        (SCRIPT_DIR / "calibration_config_legacy_640_to_250.yaml").resolve(),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -113,10 +127,31 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pipeline-profile",
+        choices=PIPELINE_PROFILES,
+        required=True,
+        help=(
+            "Acquisition profile that produced the raw data. This is required so "
+            "legacy 640-SPS calibration can never be confused with corrected "
+            "266.667-to-250-Hz calibration."
+        ),
+    )
+    parser.add_argument(
+        "--session-metadata",
+        type=Path,
+        help=(
+            "Verified receiver session JSON. Required for the corrected V2 "
+            "pipeline; legacy calibration remains an explicit session-free path."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT_PATH,
-        help="Calibration YAML output path",
+        required=True,
+        help=(
+            "Calibration YAML output path. Required explicitly so the preserved "
+            "legacy calibration_config.yaml is never overwritten by accident."
+        ),
     )
     parser.add_argument(
         "--config",
@@ -155,7 +190,7 @@ def resolve_input_dir(config_path: Path, input_dir: Path | None) -> Path:
 
 def resolve_output_path(output_path: Path) -> Path:
     if output_path.is_absolute():
-        return output_path
+        return output_path.resolve()
     return (Path.cwd() / output_path).resolve()
 
 
@@ -191,7 +226,12 @@ def validate_expected_values(args: argparse.Namespace) -> None:
             raise CalibrationError("--expected-mv must be a finite positive value")
 
 
-def load_dataset(input_dir: Path, frame_count: int) -> LoadedDataset:
+def load_dataset(
+    input_dir: Path,
+    frame_count: int,
+    pipeline_profile: str,
+    session_metadata: dict[str, Any] | None = None,
+) -> LoadedDataset:
     available_frames = find_complete_frame_sets(input_dir)
     if not available_frames:
         raise CalibrationError(f"no complete frame sets found in {input_dir}")
@@ -202,9 +242,26 @@ def load_dataset(input_dir: Path, frame_count: int) -> LoadedDataset:
     sample_rate_hz = 250
     for frame in selected_frames:
         samples, metadata = load_raw_frame(frame)
-        frame_sample_rate_hz = int(metadata.get("sample_rate_hz", sample_rate_hz))
-        if frame_sample_rate_hz > 0:
-            sample_rate_hz = frame_sample_rate_hz
+        if pipeline_profile == CORRECTED_PIPELINE_PROFILE:
+            if session_metadata is None:
+                raise CalibrationError(
+                    "--session-metadata is required for corrected-pipeline "
+                    "ProSim calibration"
+                )
+            require_frame_session_link(metadata, session_metadata)
+            require_calibration_compatible(
+                pipeline_profile_parameters(pipeline_profile),
+                metadata,
+            )
+            require_corrected_frame_provenance(
+                metadata,
+                require_signal_quality_pass=True,
+            )
+        frame_sample_rate_hz = require_frame_output_sample_rate(
+            metadata,
+            pipeline_profile_parameters(pipeline_profile),
+        )
+        sample_rate_hz = frame_sample_rate_hz
         arrays.append(samples)
         metadata_rows.append(metadata)
 
@@ -224,9 +281,17 @@ def base_config(
     expected_bpm: float | None,
     offsets: dict[str, float],
     scale_mV_per_count: float,
+    pipeline_profile: str,
 ) -> dict[str, Any]:
+    profile = pipeline_profile_parameters(pipeline_profile)
+    calibration_status = (
+        "legacy" if pipeline_profile == LEGACY_PIPELINE_PROFILE else "calibrated"
+    )
     return {
+        **profile,
         "calibration_source": "prosim",
+        "calibration_status": calibration_status,
+        "prosim_recalibration_required": pipeline_profile == LEGACY_PIPELINE_PROFILE,
         "expected_mV": expected_mV,
         "expected_bpm": expected_bpm,
         "selected_lead": "lead_ii",
@@ -268,8 +333,23 @@ def check_reference_amplitude(
 def build_rpeak_baseline_calibration(
     args: argparse.Namespace,
     input_dir: Path,
+    session_metadata: dict[str, Any] | None = None,
 ) -> CalibrationResult:
-    dataset = load_dataset(input_dir, args.frames)
+    dataset = load_dataset(
+        input_dir,
+        args.frames,
+        args.pipeline_profile,
+        session_metadata=session_metadata,
+    )
+    range_stats = offset_code_range_stats(
+        dataset.raw_samples,
+        adcmax=pipeline_profile_parameters(args.pipeline_profile)["adcmax"],
+    )
+    if range_stats["out_of_range_count"]:
+        raise CalibrationError(
+            "ProSim dataset contains "
+            f"{range_stats['out_of_range_count']} out-of-range Lead I/II code(s)"
+        )
     offsets = compute_offsets(dataset.raw_samples)
     rpeak = measure_rpeak_baseline_amplitude(
         samples=dataset.raw_samples,
@@ -278,6 +358,10 @@ def build_rpeak_baseline_calibration(
         lead=args.lead,
     )
     warnings: list[str] = []
+    if range_stats["near_rail_count"]:
+        warnings.append(
+            f"{range_stats['near_rail_count']} measured Lead I/II code(s) are near an ADC rail"
+        )
     check_reference_amplitude(
         rpeak.median_amplitude,
         float(args.min_amplitude_count),
@@ -294,6 +378,7 @@ def build_rpeak_baseline_calibration(
         expected_bpm=float(args.expected_bpm),
         offsets=offsets,
         scale_mV_per_count=scale_mV_per_count,
+        pipeline_profile=args.pipeline_profile,
     )
     config["metadata"] = {
         "method": "rpeak_baseline",
@@ -323,7 +408,7 @@ def build_rpeak_baseline_calibration(
         "offset_method": "median Lead I and Lead II; Lead III offset = Lead II - Lead I",
         "scale_method": "expected_mV / median beat-by-beat Lead II baseline-to-R amplitude",
         "ch3_tolerance_count": CH3_CONSISTENCY_TOLERANCE_COUNTS,
-        "saturation_count": count_saturation(dataset.raw_samples),
+        "raw_range_validation": range_stats,
         "lead_statistics": lead_summary(dataset.raw_samples),
     }
 
@@ -342,8 +427,23 @@ def build_rpeak_baseline_calibration(
 def build_legacy_robust_calibration(
     args: argparse.Namespace,
     input_dir: Path,
+    session_metadata: dict[str, Any] | None = None,
 ) -> CalibrationResult:
-    dataset = load_dataset(input_dir, args.frames)
+    dataset = load_dataset(
+        input_dir,
+        args.frames,
+        args.pipeline_profile,
+        session_metadata=session_metadata,
+    )
+    range_stats = offset_code_range_stats(
+        dataset.raw_samples,
+        adcmax=pipeline_profile_parameters(args.pipeline_profile)["adcmax"],
+    )
+    if range_stats["out_of_range_count"]:
+        raise CalibrationError(
+            "ProSim dataset contains "
+            f"{range_stats['out_of_range_count']} out-of-range Lead I/II code(s)"
+        )
     offsets = compute_offsets(dataset.raw_samples)
     raw_amplitude_count, lower_count, upper_count = robust_peak_to_peak(
         samples=dataset.raw_samples,
@@ -355,6 +455,10 @@ def build_legacy_robust_calibration(
         "robust_pp is a legacy/preliminary method and is not recommended for "
         "final absolute mV calibration; use rpeak_baseline or multipoint_rpeak."
     ]
+    if range_stats["near_rail_count"]:
+        warnings.append(
+            f"{range_stats['near_rail_count']} measured Lead I/II code(s) are near an ADC rail"
+        )
     check_reference_amplitude(
         raw_amplitude_count,
         float(args.min_amplitude_count),
@@ -370,7 +474,11 @@ def build_legacy_robust_calibration(
         expected_bpm=float(args.expected_bpm) if args.expected_bpm else None,
         offsets=offsets,
         scale_mV_per_count=scale_mV_per_count,
+        pipeline_profile=args.pipeline_profile,
     )
+    if args.pipeline_profile == CORRECTED_PIPELINE_PROFILE:
+        config["calibration_status"] = "preliminary"
+        config["prosim_recalibration_required"] = True
     config["legacy_method"] = True
     config["not_recommended_for_final_absolute_calibration"] = True
     config["metadata"] = {
@@ -395,7 +503,7 @@ def build_legacy_robust_calibration(
         "offset_count": dict(offsets),
         "scale_method": "legacy expected_mV / robust Lead II percentile peak-to-peak count",
         "ch3_tolerance_count": CH3_CONSISTENCY_TOLERANCE_COUNTS,
-        "saturation_count": count_saturation(dataset.raw_samples),
+        "raw_range_validation": range_stats,
         "lead_statistics": lead_summary(dataset.raw_samples),
     }
 
@@ -412,7 +520,10 @@ def build_legacy_robust_calibration(
 
 
 def fit_line(
-    amplitude_counts: np.ndarray, expected_mV: np.ndarray
+    amplitude_counts: np.ndarray,
+    expected_mV: np.ndarray,
+    *,
+    force_origin: bool = False,
 ) -> tuple[float, float, float, np.ndarray]:
     if amplitude_counts.size < 2:
         raise CalibrationError("multipoint_rpeak requires at least two --point values")
@@ -421,7 +532,14 @@ def fit_line(
     if np.unique(amplitude_counts).size < 2:
         raise CalibrationError("multipoint_rpeak requires at least two distinct amplitudes")
 
-    slope, intercept = np.polyfit(amplitude_counts, expected_mV, 1)
+    if force_origin:
+        denominator = float(np.dot(amplitude_counts, amplitude_counts))
+        if denominator <= 0.0:
+            raise CalibrationError("multipoint amplitudes cannot all be zero")
+        slope = float(np.dot(amplitude_counts, expected_mV) / denominator)
+        intercept = 0.0
+    else:
+        slope, intercept = np.polyfit(amplitude_counts, expected_mV, 1)
     predicted = slope * amplitude_counts + intercept
     residual = expected_mV - predicted
     ss_res = float(np.sum(residual * residual))
@@ -430,7 +548,10 @@ def fit_line(
     return float(slope), float(intercept), float(r_squared), predicted
 
 
-def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
+def build_multipoint_calibration(
+    args: argparse.Namespace,
+    session_metadata: dict[str, Any] | None = None,
+) -> CalibrationResult:
     points = [parse_point(raw_point) for raw_point in args.point]
     if len(points) < 2:
         raise CalibrationError("multipoint_rpeak requires at least two --point arguments")
@@ -441,7 +562,26 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
     warnings: list[str] = []
 
     for point in points:
-        dataset = load_dataset(point.input_dir, args.frames)
+        dataset = load_dataset(
+            point.input_dir,
+            args.frames,
+            args.pipeline_profile,
+            session_metadata=session_metadata,
+        )
+        range_stats = offset_code_range_stats(
+            dataset.raw_samples,
+            adcmax=pipeline_profile_parameters(args.pipeline_profile)["adcmax"],
+        )
+        if range_stats["out_of_range_count"]:
+            raise CalibrationError(
+                f"{dataset.input_dir} contains {range_stats['out_of_range_count']} "
+                "out-of-range Lead I/II code(s)"
+            )
+        if range_stats["near_rail_count"]:
+            warnings.append(
+                f"{dataset.input_dir}: {range_stats['near_rail_count']} measured "
+                "Lead I/II code(s) are near an ADC rail"
+            )
         if sample_rate_hz is None:
             sample_rate_hz = dataset.sample_rate_hz
         elif sample_rate_hz != dataset.sample_rate_hz:
@@ -473,6 +613,7 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
                 "amplitude_count_mad": rpeak.amplitude_mad,
                 "estimated_bpm": rpeak.estimated_bpm,
                 "sample_rate_hz": dataset.sample_rate_hz,
+                "raw_range_validation": range_stats,
             }
         )
 
@@ -480,7 +621,12 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
         [float(row["median_amplitude_count"]) for row in rows], dtype=np.float64
     )
     expected_mV = np.asarray([float(row["expected_mV"]) for row in rows], dtype=np.float64)
-    slope, intercept, r_squared, predicted_mV = fit_line(amplitude_counts, expected_mV)
+    force_origin = args.pipeline_profile == CORRECTED_PIPELINE_PROFILE
+    slope, intercept, r_squared, predicted_mV = fit_line(
+        amplitude_counts,
+        expected_mV,
+        force_origin=force_origin,
+    )
     max_expected_mV = float(np.max(np.abs(expected_mV)))
     intercept_warning_threshold = max(0.05, 0.05 * max_expected_mV)
     if abs(intercept) > intercept_warning_threshold:
@@ -508,6 +654,7 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
         expected_bpm=float(args.expected_bpm),
         offsets=offsets,
         scale_mV_per_count=slope,
+        pipeline_profile=args.pipeline_profile,
     )
     config["metadata"] = {
         "method": "multipoint_rpeak",
@@ -525,12 +672,21 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
             "slope_mV_per_count": slope,
             "intercept_mV": intercept,
             "r_squared": r_squared,
+            "origin_constrained": force_origin,
+            "equation": (
+                "expected_mV = slope_mV_per_count * amplitude_count"
+                if force_origin
+                else "expected_mV = slope_mV_per_count * amplitude_count + intercept_mV"
+            ),
         },
         "scale_mV_per_count": slope,
         "offset_count": offsets,
         "offset_method": "median Lead I and Lead II across all points; Lead III offset = Lead II - Lead I",
         "scale_method": "linear fit of expected_mV versus median beat-by-beat Lead II baseline-to-R amplitude",
-        "saturation_count": count_saturation(combined_samples),
+        "raw_range_validation": offset_code_range_stats(
+            combined_samples,
+            adcmax=pipeline_profile_parameters(args.pipeline_profile)["adcmax"],
+        ),
         "lead_statistics": lead_summary(combined_samples),
     }
 
@@ -541,22 +697,64 @@ def build_multipoint_calibration(args: argparse.Namespace) -> CalibrationResult:
     )
 
 
-def build_calibration(args: argparse.Namespace, input_dir: Path) -> CalibrationResult:
+def build_calibration(
+    args: argparse.Namespace,
+    input_dir: Path,
+    session_metadata: dict[str, Any] | None = None,
+) -> CalibrationResult:
     validate_expected_values(args)
+    verified_session: dict[str, Any] | None = None
+    if args.pipeline_profile == CORRECTED_PIPELINE_PROFILE:
+        if session_metadata is None:
+            raise CalibrationError(
+                "--session-metadata is required for corrected-pipeline ProSim "
+                "calibration"
+            )
+        verified_session = verify_persisted_session_metadata(session_metadata)
+        require_calibration_compatible(
+            pipeline_profile_parameters(args.pipeline_profile),
+            verified_session,
+        )
+
     if args.method == "multipoint_rpeak":
-        return build_multipoint_calibration(args)
-    if args.method == "rpeak_baseline":
-        return build_rpeak_baseline_calibration(args, input_dir)
-    return build_legacy_robust_calibration(args, input_dir)
+        result = build_multipoint_calibration(args, verified_session)
+    elif args.method == "rpeak_baseline":
+        result = build_rpeak_baseline_calibration(args, input_dir, verified_session)
+    else:
+        result = build_legacy_robust_calibration(args, input_dir, verified_session)
+
+    if verified_session is not None:
+        result.config["metadata"]["acquisition_session"] = {
+            "session_id": verified_session["session_id"],
+            "firmware_commit": verified_session["firmware_commit"],
+            "firmware_build_time_utc": verified_session.get(
+                "firmware_build_time_utc"
+            ),
+            "firmware_build_environment": verified_session.get(
+                "firmware_build_environment"
+            ),
+            "protocol_version": verified_session["protocol_version"],
+            "configuration_profile": verified_session["configuration_profile"],
+            "config_verified": verified_session["config_verified"],
+        }
+    return result
 
 
 def save_calibration_config(config: dict[str, Any], output_path: Path) -> Path:
     output_path = resolve_output_path(output_path)
+    if output_path in PROTECTED_CALIBRATION_OUTPUTS:
+        raise CalibrationError(
+            "refusing to replace a preserved calibration artifact; choose a new "
+            f"--output path: {output_path}"
+        )
+    if output_path.exists() or output_path.is_symlink():
+        raise CalibrationError(
+            "calibration --output must be a new, non-existing path; refusing to "
+            f"overwrite: {output_path}"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        yaml.safe_dump(config, sort_keys=False),
-        encoding="utf-8",
-    )
+    with output_path.open("x", encoding="utf-8") as handle:
+        handle.write(yaml.safe_dump(config, sort_keys=False))
     return output_path
 
 
@@ -640,7 +838,22 @@ def main() -> int:
 
     try:
         input_dir = resolve_input_dir(config_path, args.input_dir)
-        result = build_calibration(args, input_dir)
+        session_metadata: dict[str, Any] | None = None
+        if args.pipeline_profile == CORRECTED_PIPELINE_PROFILE:
+            if args.session_metadata is None:
+                raise CalibrationError(
+                    "--session-metadata is required for corrected-pipeline "
+                    "ProSim calibration"
+                )
+            with args.session_metadata.resolve().open("r", encoding="utf-8") as handle:
+                loaded_session = json.load(handle)
+            if not isinstance(loaded_session, dict):
+                raise CalibrationError(
+                    "--session-metadata must contain a JSON object"
+                )
+            session_metadata = loaded_session
+
+        result = build_calibration(args, input_dir, session_metadata)
         output_path = save_calibration_config(result.config, args.output)
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError, CalibrationError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

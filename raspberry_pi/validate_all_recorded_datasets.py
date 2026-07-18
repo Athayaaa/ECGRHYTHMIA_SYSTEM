@@ -19,9 +19,10 @@ from calibration_utils import (
     CalibrationError,
     ch3_max_error,
     count_nan_inf,
-    count_saturation,
+    load_calibration_config,
     load_json,
     measure_rpeak_baseline_amplitude,
+    offset_code_range_stats,
 )
 from model_input_utils import DEFAULT_MAX_ABS_MV
 from replay_dataset import ReplaySummary, find_raw_frame_sets, replay_dataset
@@ -29,7 +30,6 @@ from replay_dataset import ReplaySummary, find_raw_frame_sets, replay_dataset
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_ROOT = SCRIPT_DIR.parent / "data_kalibrasi"
-DEFAULT_CONFIG_PATH = SCRIPT_DIR / "calibration_config.yaml"
 DEFAULT_REPLAY_ROOT = SCRIPT_DIR / "data" / "replay"
 DEFAULT_REPORT_DIR = SCRIPT_DIR / "data" / "validation_reports"
 
@@ -55,7 +55,10 @@ REPORT_FIELDS = [
     "estimated_bpm",
     "bpm_error",
     "nan_inf_count",
-    "saturation_count",
+    "below_range_count",
+    "above_range_count",
+    "near_low_rail_count",
+    "near_high_rail_count",
     "maximum_absolute_mV",
     "lead_iii_max_consistency_error_mV",
     "status",
@@ -76,8 +79,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=DEFAULT_CONFIG_PATH,
-        help="Path to calibration_config.yaml",
+        required=True,
+        help="Explicit calibration YAML; use the named legacy file for old datasets",
     )
     parser.add_argument(
         "--replay-output-root",
@@ -104,10 +107,15 @@ def finite_or_nan(values: np.ndarray) -> np.ndarray:
     return values[np.isfinite(values)]
 
 
-def raw_dataset_metrics(input_dir: Path) -> dict[str, Any]:
+def raw_dataset_metrics(input_dir: Path, adcmax: int) -> dict[str, Any]:
     frames = find_raw_frame_sets(input_dir)
     nan_inf_count = 0
-    saturation_count = 0
+    range_totals = {
+        "below_range_count": 0,
+        "above_range_count": 0,
+        "near_low_rail_count": 0,
+        "near_high_rail_count": 0,
+    }
     raw_shape_failures: list[str] = []
     dtype_conversion_failures: list[str] = []
 
@@ -119,11 +127,14 @@ def raw_dataset_metrics(input_dir: Path) -> dict[str, Any]:
             continue
 
         nan_inf_count += count_nan_inf(samples)
-        saturation_count += count_saturation(samples)
         if samples.shape != EXPECTED_SHAPE:
             raw_shape_failures.append(
                 f"{frame.npy_path.name}: shape {samples.shape} != {EXPECTED_SHAPE}"
             )
+        if samples.ndim == 2 and samples.shape[1] == 3:
+            range_stats = offset_code_range_stats(samples, adcmax=adcmax)
+            for key in range_totals:
+                range_totals[key] += int(range_stats[key])
         try:
             np.asarray(samples, dtype=np.float32)
         except (TypeError, ValueError) as error:
@@ -131,7 +142,7 @@ def raw_dataset_metrics(input_dir: Path) -> dict[str, Any]:
 
     return {
         "nan_inf_count": int(nan_inf_count),
-        "saturation_count": int(saturation_count),
+        **range_totals,
         "raw_shape_failures": raw_shape_failures,
         "dtype_conversion_failures": dtype_conversion_failures,
     }
@@ -228,8 +239,16 @@ def classify_dataset(
         failures.extend(dtype_conversion_failures)
     if row["nan_inf_count"]:
         failures.append(f"{row['nan_inf_count']} NaN/Inf values found")
-    if row["saturation_count"]:
-        failures.append(f"{row['saturation_count']} saturated raw samples found")
+    out_of_range = row["below_range_count"] + row["above_range_count"]
+    near_rail = row["near_low_rail_count"] + row["near_high_rail_count"]
+    if out_of_range:
+        failures.append(
+            f"{out_of_range} acquired Lead I/II code(s) outside 0..ADCMAX"
+        )
+    elif near_rail:
+        warnings.append(
+            f"{near_rail} acquired Lead I/II code(s) near an ADC rail"
+        )
 
     lead_error = row["lead_iii_max_consistency_error_mV"]
     if (not is_finite_number(lead_error)) or lead_error > CH3_CONSISTENCY_TOLERANCE_MV:
@@ -273,6 +292,7 @@ def validate_dataset(
     config_path: Path,
     replay_root: Path,
     max_abs_mV: float,
+    adcmax: int,
 ) -> dict[str, Any]:
     input_dir = input_root / name
     summary = replay_dataset(
@@ -283,7 +303,7 @@ def validate_dataset(
         max_abs_mV=max_abs_mV,
     )
 
-    raw_metrics = raw_dataset_metrics(input_dir)
+    raw_metrics = raw_dataset_metrics(input_dir, adcmax=adcmax)
     samples_mv, sample_rate_hz = load_converted_samples(summary)
     signal_metrics = measured_signal_metrics(
         samples_mv=samples_mv,
@@ -326,7 +346,10 @@ def validate_dataset(
         "estimated_bpm": estimated_bpm,
         "bpm_error": bpm_error,
         "nan_inf_count": raw_metrics["nan_inf_count"],
-        "saturation_count": raw_metrics["saturation_count"],
+        "below_range_count": raw_metrics["below_range_count"],
+        "above_range_count": raw_metrics["above_range_count"],
+        "near_low_rail_count": raw_metrics["near_low_rail_count"],
+        "near_high_rail_count": raw_metrics["near_high_rail_count"],
         "maximum_absolute_mV": signal_metrics["maximum_absolute_mV"],
         "lead_iii_max_consistency_error_mV": signal_metrics[
             "lead_iii_max_consistency_error_mV"
@@ -394,7 +417,9 @@ def write_json_report(
             "shape": list(EXPECTED_SHAPE),
             "dtype": "convertible to float32",
             "nan_inf_count": 0,
-            "saturation_count": 0,
+            "below_range_count": 0,
+            "above_range_count": 0,
+            "near_rail_policy": "WARNING",
             "lead_iii_max_consistency_error_mV": CH3_CONSISTENCY_TOLERANCE_MV,
             "bpm_error_max": 2.0,
             "amplitude_error_percent_max": 5.0,
@@ -431,7 +456,7 @@ def write_markdown_report(
         "",
         f"- Calibration config: `{config_path}`",
         "- Canonical frame: `(2500, 3)` float32, 250 Hz, 10 seconds, mV",
-        "- Acceptance: no NaN/Inf, no saturation, Lead III error <= 1e-5 mV, "
+        "- Acceptance: no NaN/Inf, Lead I/II within 0..ADCMAX, near rail is WARNING, Lead III error <= 1e-5 mV, "
         "BPM error <= 2, amplitude error <= 5%, max abs <= 10 mV",
         "",
         "| Dataset | Raw | Converted | Model-ready | Failed | Amp mV | Amp Err % | BPM | BPM Err | Max abs mV | Lead III err mV | Status |",
@@ -500,6 +525,7 @@ def main() -> int:
     report_dir = args.report_dir.resolve()
 
     try:
+        calibration = load_calibration_config(config_path, allow_legacy=True)
         rows = [
             validate_dataset(
                 name=name,
@@ -508,6 +534,7 @@ def main() -> int:
                 config_path=config_path,
                 replay_root=replay_root,
                 max_abs_mV=float(args.max_abs_mv),
+                adcmax=int(calibration["adcmax"]),
             )
             for name, expected in EXPECTED_DATASETS.items()
         ]

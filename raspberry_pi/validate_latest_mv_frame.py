@@ -19,6 +19,7 @@ from calibration_utils import (
     EXPECTED_SHAPE,
     ch3_max_error,
     count_nan_inf,
+    file_sha256,
 )
 
 
@@ -147,6 +148,15 @@ def validate_json(json_path: Path) -> dict[str, Any]:
     return metadata
 
 
+def validate_npy_hash(npy_path: Path, metadata: dict[str, Any]) -> None:
+    expected = metadata.get("npy_sha256")
+    if not isinstance(expected, str) or len(expected) != 64:
+        raise ValidationError(f"{npy_path.name} metadata is missing valid npy_sha256")
+    actual = file_sha256(npy_path)
+    if actual != expected.lower():
+        raise ValidationError(f"{npy_path.name} SHA-256 does not match metadata")
+
+
 def main() -> int:
     args = parse_args()
     config_path = args.config.resolve()
@@ -155,8 +165,9 @@ def main() -> int:
     try:
         csv_path, npy_path, json_path = latest_mv_frame_set(data_dir)
         validate_csv(csv_path)
-        samples = validate_npy(npy_path)
         metadata = validate_json(json_path)
+        validate_npy_hash(npy_path, metadata)
+        samples = validate_npy(npy_path)
     except (OSError, ValueError, json.JSONDecodeError, yaml.YAMLError, ValidationError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1

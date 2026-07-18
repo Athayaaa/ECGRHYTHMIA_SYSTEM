@@ -14,6 +14,7 @@ from model_input_utils import (
     DEFAULT_MAX_ABS_MV,
     MODEL_SAMPLE_RATE_HZ,
     ModelInputError,
+    include_raw_range_validation,
     load_model_metadata,
     validate_model_samples,
 )
@@ -73,14 +74,19 @@ def print_lead_stats(stats: dict[str, dict[str, float]]) -> None:
 def main() -> int:
     args = parse_args()
     try:
-        metadata = load_model_metadata(args.metadata.resolve())
-        samples = np.load(args.input.resolve(), allow_pickle=False)
+        input_path = args.input.resolve()
+        metadata = load_model_metadata(
+            args.metadata.resolve(),
+            input_path=input_path,
+        )
+        samples = np.load(input_path, allow_pickle=False)
         max_abs_mV = metadata_max_abs_limit(metadata, args.max_abs_mv)
         report = validate_model_samples(
             samples,
             max_abs_mV=max_abs_mV,
             require_float32=True,
         )
+        report = include_raw_range_validation(report, metadata)
         metadata_failures, metadata_warnings = metadata_checks(metadata)
     except (OSError, ValueError, json.JSONDecodeError, ModelInputError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

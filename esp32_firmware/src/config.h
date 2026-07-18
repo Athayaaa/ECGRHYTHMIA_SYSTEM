@@ -48,7 +48,29 @@ constexpr int ADS1293_DRDY_PIN = 2;
 #endif
 
 constexpr uint16_t ADS1293_TARGET_SAMPLE_RATE_HZ = 250;
-constexpr uint16_t ADS1293_CONFIGURED_ODR_HZ = 256;
+// Corrected native ADS1293 configuration.  Keep the rate as an exact rational
+// because 102400 / (4 * 6 * 16) is 800/3 Hz, not an integer SPS value.
+constexpr const char* ADS1293_NATIVE_PROFILE =
+    "ADS1293_NATIVE_266P667_SPS";
+constexpr uint32_t ADS1293_AFE_RES_HZ = 102400UL;
+constexpr uint8_t ADS1293_R1 = 4;
+constexpr uint8_t ADS1293_R2 = 6;
+constexpr uint8_t ADS1293_R3_CH1 = 16;
+constexpr uint8_t ADS1293_R3_CH2 = 16;
+constexpr uint16_t ADS1293_NATIVE_RATE_NUMERATOR = 800;
+constexpr uint16_t ADS1293_NATIVE_RATE_DENOMINATOR = 3;
+constexpr uint32_t ADS1293_ADCMAX = 0xF30000UL;
+constexpr uint32_t ADS1293_ZERO_CODE = ADS1293_ADCMAX / 2UL;
+// VTEST=VREF/12 and the ADS1293 internal gain is 3.5, hence the ideal
+// positive/negative self-test fractions are 31/48 and 17/48 of ADCMAX.
+constexpr uint32_t ADS1293_SELFTEST_POSITIVE_CODE =
+    (ADS1293_ADCMAX / 48UL) * 31UL;
+constexpr uint32_t ADS1293_SELFTEST_NEGATIVE_CODE =
+    (ADS1293_ADCMAX / 48UL) * 17UL;
+constexpr float ADS1293_VREF_NOMINAL_V = 2.4f;
+constexpr float ADS1293_ANALOG_GAIN = 3.5f;
+constexpr uint32_t ADS1293_SPI_CLOCK_HZ = 1000000UL;
+constexpr uint16_t ADS1293_MAX_PENDING_DRDY = 255;
 constexpr uint32_t ADS1293_DEBUG_INTERVAL_MS = 125;
 constexpr bool HEART_BLINK_ENABLED = HEART_BLINK_GPIO >= 0;
 constexpr uint32_t HEART_BLINK_PERIOD_MS = 1000;
@@ -71,3 +93,15 @@ constexpr bool SIMULATION_ENABLED_DEFAULT = false;
 #endif
 
 }  // namespace Config
+
+static_assert(Config::ADS1293_AFE_RES_HZ *
+                      Config::ADS1293_NATIVE_RATE_DENOMINATOR ==
+                  static_cast<uint32_t>(
+                      Config::ADS1293_NATIVE_RATE_NUMERATOR) *
+                      Config::ADS1293_R1 * Config::ADS1293_R2 *
+                      Config::ADS1293_R3_CH1,
+              "ADS1293 native-rate fraction must exactly represent the register profile");
+static_assert(Config::ADS1293_SELFTEST_POSITIVE_CODE == 10285056UL,
+              "positive self-test code must derive from target ADCMAX");
+static_assert(Config::ADS1293_SELFTEST_NEGATIVE_CODE == 5640192UL,
+              "negative self-test code must derive from target ADCMAX");

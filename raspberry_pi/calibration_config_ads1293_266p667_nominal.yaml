@@ -1,0 +1,49 @@
+calibration_source: datasheet_nominal
+calibration_status: preliminary
+method: ads1293_datasheet_equation_13_inverse
+unit: mV
+pipeline_profile: ads1293_native_266p667_resampled_250_v2
+firmware_protocol_version: 2
+afe_res_hz: 102400
+r1: 4
+r2: 6
+r3_ch1: 16
+r3_ch2: 16
+native_sample_rate_hz: 266.6666666666667
+output_sample_rate_hz: 250.0
+resample_up: 15
+resample_down: 16
+resampling_method: stateful_polyphase_fir
+adc_encoding: offset_binary_uint24
+adcmax: 15925248
+zero_code: 7962624
+vref_nominal_v: 2.4
+analog_gain: 3.5
+scale_mV_per_count: 0.0000861166225749559
+offset_count:
+  lead_i: 7962624.0
+  lead_ii: 7962624.0
+  lead_iii: 0.0
+scale_applied_to_all_leads: true
+channel_order:
+- Lead I
+- Lead II
+- Lead III
+lead_mapping:
+  lead_i: Lead I = LA - RA
+  lead_ii: Lead II = LL - RA
+  lead_iii: Lead III = Lead II - Lead I
+invert:
+  lead_i: false
+  lead_ii: false
+  lead_iii: false
+filters:
+  remove_mean: false
+  high_pass_cutoff_hz: 0.0
+  low_pass_cutoff_hz: 0.0
+  notch_50hz: false
+prosim_recalibration_required: true
+notes:
+- Preliminary input-referred conversion calculated from ADS1293 datasheet parameters.
+- This is not a final external ProSim calibration.
+- Baseline correction is preprocessing and is not included in ADC scaling.

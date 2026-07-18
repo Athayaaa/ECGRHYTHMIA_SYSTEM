@@ -1,5 +1,13 @@
 # ECGRHYTHMIA System
 
+> **LEGACY DOCUMENTATION NOTICE:** The Phase 1/2/3D/3E instructions below
+> describe the historical dummy or ADS1293 640-SPS/software-gated pipeline.
+> Its `calibration_config.yaml`, Streamlit rail checks, and ProSim results must
+> not be used with corrected protocol V2 acquisition. Start corrected work at
+> `raspberry_pi/README.md`, `raspberry_pi/ADS1293_CORRECTED_PIPELINE.md`, and
+> `raspberry_pi/CALIBRATION_MIGRATION.md`. The corrected datasheet conversion is
+> preliminary until new external ProSim calibration is completed.
+
 Phase 1 ESP32 firmware supports two ECG binary output transports.
 
 - `esp32dev_dummy`: UART2 on GPIO17/GPIO16
@@ -87,6 +95,12 @@ metrics, and writes plots to `raspberry_pi/data/analysis/`.
 
 ## Phase 3E Local Calibration GUI
 
+> **LEGACY ONLY:** `calibration_gui.py` retains the historical signed-rail and
+> `calibration_config.yaml` workflow. Do not open corrected V2 frames in this
+> Streamlit tool and do not use its saved scale with corrected firmware. Use
+> the corrected command-line calibration/validation flow documented under
+> `raspberry_pi/` instead.
+
 Detailed calibration guide: `docs/PHASE_3E_STREAMLIT_CALIBRATION_GUIDE.md`.
 
 The calibration GUI does not open the serial port. It only reads the latest
@@ -129,34 +143,42 @@ formats.
 1. Connect ProSim `RA`, `LA`, `LL`, and `RL/RLD` to the ADS1293 electrodes.
 2. Set ProSim to a `1 mV` calibration pulse if available. Otherwise use Normal
    Sinus Rhythm, `60 BPM`, `1 mV`.
-3. Run the receiver for about 1 minute:
+3. Run the corrected receiver for about 1 minute into a new session directory:
 
    ```bash
    cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
    source venv/bin/activate
-   python3 receiver.py --port /dev/ttyUSB0 --baudrate 115200
+   python3 receiver.py \
+     --port /dev/ttyUSB0 \
+     --output-dir data/sessions/prosim_60bpm_1mV
    ```
 
-4. Validate the latest exported frame:
+4. Validate the corrected frame and its persisted acquisition status/hash:
 
    ```bash
-   python3 validate_latest_frame.py
+   python3 analyze_latest_ads1293_frame.py \
+     --data-dir data/sessions/prosim_60bpm_1mV
    ```
 
-5. Run auto-calibration using the latest 6 frames:
+5. Run auto-calibration using the verified session and write a new config:
 
    ```bash
-   python3 auto_calibrate_prosim.py --expected-mv 1.0 --lead lead_ii --frames 6
+   python3 auto_calibrate_prosim.py \
+     --input-dir data/sessions/prosim_60bpm_1mV \
+     --session-metadata data/sessions/prosim_60bpm_1mV/session_<timestamp>.json \
+     --expected-mv 1.0 \
+     --expected-bpm 60 \
+     --lead lead_ii \
+     --frames 6 \
+     --method rpeak_baseline \
+     --pipeline-profile ads1293_native_266p667_resampled_250_v2 \
+     --output calibration_config_ads1293_266p667_prosim_60bpm_1mV.yaml
    ```
 
-   This writes `raspberry_pi/calibration_config.yaml`, preview exports in
-   `raspberry_pi/data/calibrated/`, and plots in `raspberry_pi/data/analysis/`.
-   The preview NPY is the latest calibrated 10-second frame with shape
-   `(2500, 3)`.
-
-6. Open the calibration GUI and click `Load calibration_config.yaml` in
-   Calibration mode, or use `Run/Refresh ProSim Auto Calibration` from the same
-   panel.
+   The output path must not already exist. The preserved
+   `calibration_config.yaml` and `calibration_config_legacy_640_to_250.yaml`
+   cannot be overwritten by this command. Repeat with multiple amplitudes for
+   the final multipoint procedure documented in `raspberry_pi/CALIBRATION_MIGRATION.md`.
 
 Use the Human Quick Test preset only with battery or power-bank operation. Do
 not connect charger/PLN while electrodes are attached.

@@ -5,6 +5,7 @@ serial:
   read_size_bytes: 1024
   startup_delay_sec: 3.0
   flush_on_start: true
+  config_response_timeout_seconds: 1.5
 
 source: ads1293
 send_start_commands: true
@@ -18,8 +19,9 @@ ads1293_ready_poll_interval_sec: 0.5
 ads1293_status_read_timeout_sec: 0.8
 ads1293_require_drdy_pin: true
 start_commands:
+  - "ads stream stop"
   - "ads debug off"
-  - "ads stop"
+  - "ads config dump"
   - "ads start"
   - "ads stream start"
 
@@ -31,12 +33,17 @@ output:
   directory: data
   raw_csv: raw_ecg.csv
   sqlite_db: ecg_metadata.sqlite
+  calibration_config: calibration_config_ads1293_266p667_nominal.yaml
+  calibrated_directory: calibrated
+  native_capture_enabled: false
+  native_directory: native
 
 runtime:
   status_interval_seconds: 5
+  saturation_margin_counts: 8192
 
 device:
-  device_id: esp32dev_dummy
+  device_id: from_verified_firmware
   state: stored
 
 model_ready_export:

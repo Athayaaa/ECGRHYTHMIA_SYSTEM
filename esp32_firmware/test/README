@@ -9,3 +9,27 @@ in the development cycle.
 
 More information about PlatformIO Unit Testing:
 - https://docs.platformio.org/en/latest/advanced/unit-testing/index.html
+
+The corrected acquisition code also carries compile-time assertions for:
+
+- 32-byte V1/V2 packet size and 25-byte payload;
+- `DATA_STATUS` ECG-ready mask `0xE0`;
+- target `ADCMAX=0xF30000` and zero code `0x798000`;
+- target native ODR integer component for R1=4/R2=6/R3=16;
+- R1/R2/R3 register-value decoding and supported `REVID=0x01`;
+- latest-only DRDY collapse, exact native sequence advancement, and diagnostic
+  byte saturation without wrap;
+- conservative discard of a read whose event identity becomes ambiguous due
+  to a post-claim DRDY.
+
+The native host fixture runs the production `ECGPacket.cpp` and `CRC16.cpp`
+without hardware and compares the encoded packet against an independently
+specified byte array, including the known CRC `0x8926`:
+
+```bash
+pio test -e native_packet_test
+```
+
+All four current firmware environments must compile as the minimum regression
+gate. Hardware-only behavior (register readback, DRDY count, internal self-test,
+and packet-loss soak testing) cannot be claimed from compile tests alone.

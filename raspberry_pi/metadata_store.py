@@ -45,8 +45,14 @@ class MetadataStore:
                 bin_file,
                 npy_file,
                 json_file,
-                parser_stats_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parser_stats_json,
+                session_id,
+                protocol_version,
+                acquisition_status,
+                calibration_status,
+                signal_quality_status,
+                frame_metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 metadata["measurement_id"],
@@ -72,6 +78,12 @@ class MetadataStore:
                 metadata["npy_file"],
                 json_file,
                 json.dumps(metadata.get("parser_stats", {})),
+                metadata.get("session_id"),
+                metadata.get("protocol_version"),
+                metadata.get("acquisition_status"),
+                metadata.get("calibration_status"),
+                metadata.get("signal_quality_status"),
+                json.dumps(metadata, sort_keys=True),
             ),
         )
         self._connection.commit()
@@ -81,7 +93,7 @@ class MetadataStore:
             """
             SELECT *
             FROM ecg_frames
-            ORDER BY frame_index DESC
+            ORDER BY created_at_utc DESC, rowid DESC
             LIMIT 1
             """
         ).fetchone()
@@ -116,6 +128,12 @@ class MetadataStore:
                 npy_file TEXT NOT NULL,
                 json_file TEXT NOT NULL,
                 parser_stats_json TEXT NOT NULL
+                , session_id TEXT
+                , protocol_version INTEGER
+                , acquisition_status TEXT
+                , calibration_status TEXT
+                , signal_quality_status TEXT
+                , frame_metadata_json TEXT
             )
             """
         )
@@ -125,10 +143,34 @@ class MetadataStore:
             ON ecg_frames(frame_index)
             """
         )
+        self._ensure_optional_columns()
         self._connection.commit()
+
+    def _ensure_optional_columns(self) -> None:
+        existing = {
+            row[1]
+            for row in self._connection.execute("PRAGMA table_info(ecg_frames)")
+        }
+        optional_columns = {
+            "session_id": "TEXT",
+            "protocol_version": "INTEGER",
+            "acquisition_status": "TEXT",
+            "calibration_status": "TEXT",
+            "signal_quality_status": "TEXT",
+            "frame_metadata_json": "TEXT",
+        }
+        for name, column_type in optional_columns.items():
+            if name not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE ecg_frames ADD COLUMN {name} {column_type}"
+                )
 
     @staticmethod
     def _row_to_metadata(row: sqlite3.Row) -> dict[str, Any]:
+        if "frame_metadata_json" in row.keys() and row["frame_metadata_json"]:
+            full = json.loads(row["frame_metadata_json"])
+            if isinstance(full, dict):
+                return full
         return {
             "measurement_id": row["measurement_id"],
             "device_id": row["device_id"],

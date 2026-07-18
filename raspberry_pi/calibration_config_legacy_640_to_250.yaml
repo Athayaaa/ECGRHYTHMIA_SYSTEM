@@ -1,0 +1,131 @@
+calibration_source: prosim
+expected_mV: null
+expected_bpm: 60.0
+selected_lead: lead_ii
+method: multipoint_rpeak
+unit: mV
+offset_count:
+  lead_i: 6399663.0
+  lead_ii: 6399426.0
+  lead_iii: -237.0
+scale_mV_per_count: 0.00011691351316834283
+scale_applied_to_all_leads: true
+channel_order:
+- Lead I
+- Lead II
+- Lead III
+lead_mapping:
+  lead_i: Lead I = LA - RA
+  lead_ii: Lead II = LL - RA
+  lead_iii: Lead III = Lead II - Lead I
+invert:
+  lead_i: false
+  lead_ii: false
+  lead_iii: false
+filters:
+  remove_mean: false
+  high_pass_cutoff_hz: 0.0
+  low_pass_cutoff_hz: 0.0
+  notch_50hz: false
+metadata:
+  method: multipoint_rpeak
+  expected_bpm: 60.0
+  reference_lead: lead_ii
+  reference_lead_label: Lead II
+  created_at: '2026-07-15T05:53:36.803325Z'
+  created_at_utc: '2026-07-15T05:53:36.803325Z'
+  sample_rate_hz: 250
+  sample_count: 45000
+  duration_sec: 180.0
+  calibration_points: &id001
+  - input_dir: /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/60BPM_0p5mV
+    expected_mV: 0.5
+    frames_used:
+    - frame_000009
+    - frame_000010
+    - frame_000011
+    - frame_000012
+    - frame_000013
+    - frame_000014
+    frames_available: 14
+    beats_detected: 60
+    beats_accepted: 60
+    beats_rejected: 0
+    median_amplitude_count: 4223.5
+    amplitude_count_mad: 116.75
+    estimated_bpm: 60.0
+    sample_rate_hz: 250
+    predicted_mV: 0.5032019650218492
+    error_mV: 0.003201965021849218
+    error_percent: 0.6403930043698436
+  - input_dir: /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/60BPM_1mV
+    expected_mV: 1.0
+    frames_used:
+    - frame_000005
+    - frame_000006
+    - frame_000007
+    - frame_000008
+    - frame_000009
+    - frame_000010
+    frames_available: 10
+    beats_detected: 60
+    beats_accepted: 60
+    beats_rejected: 0
+    median_amplitude_count: 8432.0
+    amplitude_count_mad: 98.0
+    estimated_bpm: 60.0
+    sample_rate_hz: 250
+    predicted_mV: 0.9952324851908201
+    error_mV: -0.004767514809179918
+    error_percent: -0.4767514809179918
+  - input_dir: /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/60BPM_2mV
+    expected_mV: 2.0
+    frames_used:
+    - frame_000020
+    - frame_000021
+    - frame_000022
+    - frame_000023
+    - frame_000024
+    - frame_000025
+    frames_available: 25
+    beats_detected: 60
+    beats_accepted: 60
+    beats_rejected: 0
+    median_amplitude_count: 17039.5
+    amplitude_count_mad: 157.5
+    estimated_bpm: 60.0
+    sample_rate_hz: 250
+    predicted_mV: 2.001565549787331
+    error_mV: 0.0015655497873310331
+    error_percent: 0.07827748936655166
+  validation_results: *id001
+  fit:
+    slope_mV_per_count: 0.00011691351316834283
+    intercept_mV: 0.009417742155353246
+    r_squared: 0.9999696290940627
+  scale_mV_per_count: 0.00011691351316834283
+  offset_count:
+    lead_i: 6399663.0
+    lead_ii: 6399426.0
+    lead_iii: -237.0
+  offset_method: median Lead I and Lead II across all points; Lead III offset = Lead
+    II - Lead I
+  scale_method: linear fit of expected_mV versus median beat-by-beat Lead II baseline-to-R
+    amplitude
+  saturation_count: 0
+  lead_statistics:
+    lead_i:
+      mean: 6399983.0
+      median: 6399663.0
+      minimum: 6397509.0
+      maximum: 6412451.0
+    lead_ii:
+      mean: 6399839.5
+      median: 6399426.0
+      minimum: 6394242.0
+      maximum: 6417324.0
+    lead_iii:
+      mean: -144.1109161376953
+      median: -246.0
+      minimum: -3823.0
+      maximum: 5169.0

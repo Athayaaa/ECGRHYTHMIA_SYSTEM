@@ -1,5 +1,12 @@
 # ECGRHYTHMIA Pipeline Handoff
 
+> **LEGACY 640-TO-250 PIPELINE ONLY:** This handoff records the historical
+> sample-skipping pipeline and its archived ProSim calibration. The word
+> "final" below applies only to that legacy dataset; it is incompatible with
+> corrected protocol V2 firmware. For current acquisition, use
+> `ADS1293_CORRECTED_PIPELINE.md`, `CALIBRATION_MIGRATION.md`, and
+> `calibration_config_ads1293_266p667_nominal.yaml` (preliminary).
+
 ## Calibration
 
 - Calibration file: `calibration_config.yaml`
