@@ -1,0 +1,87 @@
+{
+  "calibration": {
+    "calibration_source": "prosim",
+    "expected_mV": null,
+    "method": "multipoint_rpeak",
+    "offset_count": {
+      "lead_i": 6399663.0,
+      "lead_ii": 6399426.0,
+      "lead_iii": -237.0
+    },
+    "scale_applied_to_all_leads": true,
+    "scale_mV_per_count": 0.00011691351316834283,
+    "selected_lead": "lead_ii"
+  },
+  "ch3_derived": true,
+  "ch3_max_error_mV": 0.0,
+  "channel_order": [
+    "Lead I",
+    "Lead II",
+    "Lead III"
+  ],
+  "created_at_utc": "2026-07-17T14:31:14.935515Z",
+  "dtype": "float32",
+  "duration_seconds": 10.0,
+  "lead_mapping": {
+    "lead_i_mV": "Lead I = LA - RA",
+    "lead_ii_mV": "Lead II = LL - RA",
+    "lead_iii_mV": "Lead III = Lead II - Lead I"
+  },
+  "sample_count": 2500,
+  "sample_rate_hz": 250,
+  "shape": [
+    2500,
+    3
+  ],
+  "source_files": {
+    "bin": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/SVTArr/frame_000002.bin",
+    "csv": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/SVTArr/frame_000002.csv",
+    "json": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/SVTArr/frame_000002.json",
+    "npy": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/SVTArr/frame_000002.npy"
+  },
+  "source_frame": "frame_000002",
+  "source_metadata": {
+    "bin_file": "frame_000002.bin",
+    "ch3_derived": true,
+    "channel_order": [
+      "Lead I",
+      "Lead II",
+      "Lead III"
+    ],
+    "created_at_utc": "2026-07-03T08:17:58.325876Z",
+    "csv_file": "frame_000002.csv",
+    "device_id": "esp32dev_dummy",
+    "dtype": "float32",
+    "duration_seconds": 10.0,
+    "frame_index": 2,
+    "lead_mapping": {
+      "ch1": "Lead I = LA - RA",
+      "ch2": "Lead II = LL - RA",
+      "ch3": "Lead III = Lead II - Lead I"
+    },
+    "measurement_id": "525334a3-c42c-42fe-91c1-32d4680a758b",
+    "npy_file": "frame_000002.npy",
+    "parser_stats": {
+      "bytes_discarded": 0,
+      "crc_errors": 0,
+      "header_errors": 0,
+      "last_sequence": 5010,
+      "out_of_order_count": 0,
+      "packet_loss_count": 0,
+      "packets_ok": 5011
+    },
+    "sample_count": 2500,
+    "sample_rate_hz": 250,
+    "sequence_end": 4999,
+    "sequence_start": 2500,
+    "sha256_checksum": "283b8130db909dbf0f120ac430644b814cd1c696412d1af1ceac10110e7bf5e8",
+    "shape": [
+      2500,
+      3
+    ],
+    "state": "stored",
+    "timestamp_us_end": 27805980,
+    "timestamp_us_start": 17809981
+  },
+  "unit": "mV"
+}
