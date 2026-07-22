@@ -1,4 +1,4 @@
-"""Medical ECG-paper grid drawn directly in plot data coordinates."""
+"""Medical ECG-paper grid and raw ADC count grid drawn in plot data coordinates."""
 
 from __future__ import annotations
 
@@ -14,10 +14,20 @@ _HORIZONTAL_SPACING = {
     25.0: (0.04, 0.20),
     50.0: (0.02, 0.10),
 }
+_ENGINEERING_HORIZONTAL_SPACING = (0.10, 0.50)
 _VERTICAL_SPACING = {
     5.0: (0.20, 1.00),
     10.0: (0.10, 0.50),
     20.0: (0.05, 0.25),
+}
+# Raw ADC count grid spacing (minor, major) - using 5:1 ratio
+_RAW_COUNT_SPACING = {
+    100.0: (100.0, 500.0),
+    250.0: (250.0, 1250.0),
+    500.0: (500.0, 2500.0),
+    1000.0: (1000.0, 5000.0),
+    2500.0: (2500.0, 12500.0),
+    5000.0: (5000.0, 25000.0),
 }
 
 
@@ -78,10 +88,13 @@ class GridSpacing:
 def calculate_grid_spacing(
     paper_speed_mm_s: float = 25.0,
     gain_mm_mv: float = 10.0,
+    *,
+    raw_count_spacing: float | None = None,
     **kwargs: float,
 ) -> GridSpacing:
     """Map paper speed and gain to standard ECG-grid data intervals.
 
+    For raw ADC mode, pass raw_count_spacing (e.g., 1000.0) instead of gain.
     This function has no GUI state, so grid calibration can be unit tested
     without constructing a QApplication.
     """
@@ -93,9 +106,20 @@ def calculate_grid_spacing(
         raise TypeError(f"unexpected grid-spacing argument(s): {unknown}")
 
     speed = _supported_value(paper_speed_mm_s, _HORIZONTAL_SPACING, "speed")
-    gain = _supported_value(gain_mm_mv, _VERTICAL_SPACING, "gain")
-    minor_x, major_x = _HORIZONTAL_SPACING[speed]
-    minor_y, major_y = _VERTICAL_SPACING[gain]
+
+    # Raw mode is an engineering plot: paper speed must not affect its time
+    # grid.  The selected raw spacing only controls the vertical count grid.
+    if raw_count_spacing is not None:
+        minor_x, major_x = _ENGINEERING_HORIZONTAL_SPACING
+        count_spacing = _supported_value(
+            raw_count_spacing, _RAW_COUNT_SPACING, "raw count spacing"
+        )
+        minor_y, major_y = _RAW_COUNT_SPACING[count_spacing]
+    else:
+        minor_x, major_x = _HORIZONTAL_SPACING[speed]
+        gain = _supported_value(gain_mm_mv, _VERTICAL_SPACING, "gain")
+        minor_y, major_y = _VERTICAL_SPACING[gain]
+
     return GridSpacing(minor_x, major_x, minor_y, major_y)
 
 
@@ -141,23 +165,31 @@ class ECGGridItem(pg.GraphicsObject):
     MAJOR_COLOR = QtGui.QColor("#dfa3aa")
     ZERO_COLOR = QtGui.QColor("#b86d77")
 
+    # Engineering style colors (simple, less prominent)
+    ENGINEERING_MINOR_COLOR = QtGui.QColor("#e0e0e0")
+    ENGINEERING_MAJOR_COLOR = QtGui.QColor("#bdbdbd")
+    ENGINEERING_ZERO_COLOR = QtGui.QColor("#757575")
+
     def __init__(
         self,
         paper_speed_mm_s: float = 25.0,
         gain_mm_mv: float = 10.0,
         *,
+        raw_count_spacing: float | None = None,
         view_box: pg.ViewBox | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self._paper_speed_mm_s = float(paper_speed_mm_s)
         self._gain_mm_mv = float(gain_mm_mv)
+        self._raw_count_spacing = float(raw_count_spacing) if raw_count_spacing is not None else None
         self._spacing = calculate_grid_spacing(
-            self._paper_speed_mm_s, self._gain_mm_mv
+            self._paper_speed_mm_s, self._gain_mm_mv, raw_count_spacing=self._raw_count_spacing
         )
         self._display_scale_factor = 1.0
         self._visible_rect = QtCore.QRectF(0.0, -2.0, 10.0, 4.0)
         self._view_box: pg.ViewBox | None = None
+        self._grid_style = "medical"  # "medical" or "engineering"
         self.setZValue(-1_000.0)
         self.setAcceptedMouseButtons(QtCore.Qt.MouseButton.NoButton)
         if view_box is not None:
@@ -175,9 +207,13 @@ class ECGGridItem(pg.GraphicsObject):
     def gain_mm_mv(self) -> float:
         return self._gain_mm_mv
 
+    @property
+    def grid_style(self) -> str:
+        return self._grid_style
+
     def set_paper_speed(self, paper_speed_mm_s: float) -> None:
         spacing = calculate_grid_spacing(
-            paper_speed_mm_s, self._gain_mm_mv
+            paper_speed_mm_s, self._gain_mm_mv, raw_count_spacing=self._raw_count_spacing
         )
         self._paper_speed_mm_s = _supported_value(
             paper_speed_mm_s, _HORIZONTAL_SPACING, "speed"
@@ -190,13 +226,43 @@ class ECGGridItem(pg.GraphicsObject):
 
     def set_gain(self, gain_mm_mv: float) -> None:
         spacing = calculate_grid_spacing(
-            self._paper_speed_mm_s, gain_mm_mv
+            self._paper_speed_mm_s, gain_mm_mv, raw_count_spacing=self._raw_count_spacing
         )
         self._gain_mm_mv = _supported_value(
             gain_mm_mv, _VERTICAL_SPACING, "gain"
         )
         self._spacing = spacing
         self.spacingChanged.emit(spacing)
+        self.update()
+
+    def set_raw_count_spacing(self, count_spacing: float) -> None:
+        """Set vertical grid spacing for raw ADC count mode."""
+        spacing = calculate_grid_spacing(
+            self._paper_speed_mm_s, self._gain_mm_mv, raw_count_spacing=count_spacing
+        )
+        self._raw_count_spacing = _supported_value(
+            count_spacing, _RAW_COUNT_SPACING, "raw count spacing"
+        )
+        self._spacing = spacing
+        self.spacingChanged.emit(spacing)
+        self.update()
+
+    def set_mv_mode(self) -> None:
+        """Switch to mV-based vertical grid."""
+        self._raw_count_spacing = None
+        spacing = calculate_grid_spacing(
+            self._paper_speed_mm_s, self._gain_mm_mv, raw_count_spacing=None
+        )
+        self._spacing = spacing
+        self.spacingChanged.emit(spacing)
+        self.update()
+
+    def set_style(self, style: str) -> None:
+        """Set grid style to 'medical' or 'engineering'."""
+        normalized = str(style).lower().strip()
+        if normalized not in ("medical", "engineering"):
+            return
+        self._grid_style = normalized
         self.update()
 
     def set_display_scale_factor(self, factor: float) -> None:
@@ -285,7 +351,17 @@ class ECGGridItem(pg.GraphicsObject):
             rect.top(), rect.bottom(), self._spacing.major_vertical_mv
         )
 
-        painter.setPen(self._pen(self.MINOR_COLOR, 0.45))
+        # Use different colors based on style
+        if self._grid_style == "engineering":
+            minor_color = self.ENGINEERING_MINOR_COLOR
+            major_color = self.ENGINEERING_MAJOR_COLOR
+            zero_color = self.ENGINEERING_ZERO_COLOR
+        else:
+            minor_color = self.MINOR_COLOR
+            major_color = self.MAJOR_COLOR
+            zero_color = self.ZERO_COLOR
+
+        painter.setPen(self._pen(minor_color, 0.45))
         self._draw_vertical_lines(
             painter,
             (
@@ -305,14 +381,14 @@ class ECGGridItem(pg.GraphicsObject):
             rect,
         )
 
-        painter.setPen(self._pen(self.MAJOR_COLOR, 0.85))
+        painter.setPen(self._pen(major_color, 0.85))
         self._draw_vertical_lines(painter, major_x, rect)
         self._draw_horizontal_lines(
             painter, (y for y in major_y if not math.isclose(y, 0.0)), rect
         )
 
         if rect.top() <= 0.0 <= rect.bottom():
-            painter.setPen(self._pen(self.ZERO_COLOR, 1.35))
+            painter.setPen(self._pen(zero_color, 1.35))
             painter.drawLine(
                 QtCore.QLineF(rect.left(), 0.0, rect.right(), 0.0)
             )

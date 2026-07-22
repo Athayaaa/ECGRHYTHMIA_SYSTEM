@@ -1,7 +1,8 @@
-"""Validation for calibrated ECG frames before they reach a plot.
+"""Validation for ECG frames before they reach a plot.
 
-Validation never changes a source file.  Non-float32 numerical arrays are
-converted to a separate in-memory float32 array and reported as a warning.
+Supports both raw ADC frames (integer dtypes) and calibrated mV frames (float32).
+Validation never changes a source file. Non-float32 numerical arrays for mV mode
+are converted to a separate in-memory float32 array and reported as a warning.
 Only sample-data failures block plotting; metadata and Lead III consistency
 issues are warnings so an operator can still inspect the stored signal.
 """
@@ -26,6 +27,10 @@ EXPECTED_UNIT = "mV"
 EXPECTED_CHANNEL_ORDER = ("Lead I", "Lead II", "Lead III")
 DEFAULT_MAX_ABS_MV = 10.0
 DEFAULT_LEAD_III_TOLERANCE_MV = 1e-5
+
+# Raw ADC mode expectations
+EXPECTED_RAW_UNIT = "ADC count"
+DEFAULT_RAW_MAX_ABS = 65535.0  # uint16 max by default
 
 
 class ValidationStatus(str, Enum):
@@ -114,9 +119,14 @@ class ValidationResult:
 
     @property
     def can_plot(self) -> bool:
-        """Whether sample data passed every plot-blocking check."""
+        """Whether structurally valid, finite samples are safe to render.
 
-        return self.status is not ValidationStatus.FAIL and self.samples is not None
+        A clinical amplitude failure remains ``FAIL`` but is still useful to
+        inspect (for example with floating ADS1293 inputs). Corrupt shape,
+        unsupported dtype, conversion failure, and NaN/Inf leave no samples.
+        """
+
+        return self.samples is not None
 
     @property
     def is_valid(self) -> bool:
@@ -139,6 +149,7 @@ class FrameValidator:
         *,
         max_abs_mv: float = DEFAULT_MAX_ABS_MV,
         lead_iii_tolerance_mv: float = DEFAULT_LEAD_III_TOLERANCE_MV,
+        source_mode: str = "mv",
     ) -> None:
         if max_abs_mv <= 0:
             raise ValueError("max_abs_mv must be positive")
@@ -146,6 +157,17 @@ class FrameValidator:
             raise ValueError("lead_iii_tolerance_mv must not be negative")
         self.max_abs_limit_mv = float(max_abs_mv)
         self.lead_iii_tolerance_mv = float(lead_iii_tolerance_mv)
+        self.source_mode = self._normalize_source_mode(source_mode)
+
+    @staticmethod
+    def _normalize_source_mode(mode: str) -> str:
+        """Normalize source mode to 'raw' or 'mv'."""
+        normalized = str(mode).lower().strip()
+        if normalized in ("raw", "raw adc", "adc"):
+            return "raw"
+        if normalized in ("mv", "calibrated", "calibrated mv"):
+            return "mv"
+        raise ValueError(f"Invalid source mode: {mode!r}; expected 'raw' or 'mv'")
 
     def validate(
         self,
@@ -356,14 +378,17 @@ class FrameValidator:
                 statistics=(),
             )
 
-        if array.dtype != EXPECTED_DTYPE:
+        # Raw mode accepts integer dtypes; mV mode expects float32
+        is_raw_mode = self.source_mode == "raw"
+        expected_dtype = EXPECTED_DTYPE if not is_raw_mode else None
+
+        if not is_raw_mode and array.dtype != EXPECTED_DTYPE:
             warnings.append(
                 f"Dtype is {source_dtype}; converted to float32 in memory only."
             )
 
         try:
-            # Float64 diagnostics preserve a value just above the clinical
-            # threshold before the required plot conversion rounds it.
+            # Float64 diagnostics preserve values for validation
             diagnostic = array.astype(np.float64, copy=False)
             plot_samples = array.astype(np.float32, copy=False)
         except (TypeError, ValueError, OverflowError, MemoryError) as error:
@@ -388,19 +413,53 @@ class FrameValidator:
                 f"Samples contain non-finite values "
                 f"({nan_count} NaN, {inf_count} Inf)."
             )
+            # Never hand NaN/Inf to pyqtgraph. Other FAIL conditions such as
+            # excessive finite amplitude remain visible for diagnosis.
+            plot_samples = None
 
         max_abs_mv: float | None = None
         lead_iii_error: float | None = None
         statistics: tuple[LeadStatistics, ...] = ()
+
         if diagnostic.size and finite:
             max_abs_mv = float(np.max(np.abs(diagnostic)))
-            if max_abs_mv > self.max_abs_limit_mv:
+
+            # For mV mode, apply clinical amplitude limit
+            if not is_raw_mode and max_abs_mv > self.max_abs_limit_mv:
                 errors.append(
                     f"Maximum absolute amplitude is {max_abs_mv:.6g} mV; "
                     f"limit is {self.max_abs_limit_mv:.6g} mV."
                 )
 
+            # For raw mode, validate ADC range if ADCMAX available
+            if is_raw_mode and metadata:
+                adcmax = metadata.get("ADCMAX")
+                zero_code = metadata.get("zero_code")
+                if adcmax is not None:
+                    try:
+                        adcmax_val = float(adcmax)
+                        # Check Lead I and Lead II are within [0, ADCMAX]
+                        if diagnostic.shape == EXPECTED_SHAPE:
+                            lead_i_min = float(np.min(diagnostic[:, 0]))
+                            lead_i_max = float(np.max(diagnostic[:, 0]))
+                            lead_ii_min = float(np.min(diagnostic[:, 1]))
+                            lead_ii_max = float(np.max(diagnostic[:, 1]))
+
+                            if lead_i_min < 0 or lead_i_max > adcmax_val:
+                                warnings.append(
+                                    f"Lead I range [{lead_i_min:.0f}, {lead_i_max:.0f}] "
+                                    f"outside expected [0, {adcmax_val:.0f}]."
+                                )
+                            if lead_ii_min < 0 or lead_ii_max > adcmax_val:
+                                warnings.append(
+                                    f"Lead II range [{lead_ii_min:.0f}, {lead_ii_max:.0f}] "
+                                    f"outside expected [0, {adcmax_val:.0f}]."
+                                )
+                    except (TypeError, ValueError):
+                        pass
+
             if source_shape == EXPECTED_SHAPE:
+                # Calculate Lead III error
                 lead_iii_error = float(
                     np.max(
                         np.abs(
@@ -409,13 +468,30 @@ class FrameValidator:
                         )
                     )
                 )
-                if lead_iii_error > self.lead_iii_tolerance_mv:
+
+                # Use appropriate tolerance based on mode
+                tolerance = self.lead_iii_tolerance_mv if not is_raw_mode else 2.0
+                unit_str = "mV" if not is_raw_mode else "count"
+
+                if lead_iii_error > tolerance:
                     warnings.append(
                         f"Lead III maximum equation error is "
-                        f"{lead_iii_error:.6g} mV; tolerance is "
-                        f"{self.lead_iii_tolerance_mv:.6g} mV."
+                        f"{lead_iii_error:.6g} {unit_str}; tolerance is "
+                        f"{tolerance:.6g} {unit_str}."
                     )
-                statistics = self._calculate_statistics(diagnostic)
+                statistics = self._calculate_statistics(diagnostic, is_raw=is_raw_mode)
+
+        return self._result(
+            errors=errors,
+            warnings=warnings,
+            samples=plot_samples,
+            metadata=metadata,
+            source_shape=source_shape,
+            source_dtype=source_dtype,
+            max_abs_mv=max_abs_mv,
+            lead_iii_error=lead_iii_error,
+            statistics=statistics,
+        )
 
         return self._result(
             errors=errors,
@@ -437,8 +513,8 @@ class FrameValidator:
             raise ValueError("metadata root must be a JSON object")
         return metadata
 
-    @staticmethod
     def _metadata_warnings(
+        self,
         metadata: Mapping[str, Any] | None,
         *,
         available: bool,
@@ -446,7 +522,9 @@ class FrameValidator:
         if not available or metadata is None:
             return ["Matching JSON metadata is missing; NPY samples can still be plotted."]
 
+        is_raw_mode = self.source_mode == "raw"
         warnings: list[str] = []
+
         sample_rate = metadata.get("sample_rate_hz")
         if sample_rate != EXPECTED_SAMPLE_RATE_HZ:
             warnings.append(
@@ -454,10 +532,12 @@ class FrameValidator:
                 f"{EXPECTED_SAMPLE_RATE_HZ}."
             )
 
+        # Check unit based on mode
         unit = metadata.get("unit")
-        if unit != EXPECTED_UNIT:
+        expected_unit = EXPECTED_RAW_UNIT if is_raw_mode else EXPECTED_UNIT
+        if unit != expected_unit:
             warnings.append(
-                f"Metadata unit is {unit!r}; expected {EXPECTED_UNIT!r}."
+                f"Metadata unit is {unit!r}; expected {expected_unit!r}."
             )
 
         channel_order = metadata.get("channel_order")
@@ -474,12 +554,15 @@ class FrameValidator:
                 f"{list(EXPECTED_CHANNEL_ORDER)!r}."
             )
 
-        optional_checks: tuple[tuple[str, Any], ...] = (
+        # Optional checks - skip dtype check for raw mode
+        optional_checks: list[tuple[str, Any]] = [
             ("sample_count", EXPECTED_SHAPE[0]),
             ("shape", list(EXPECTED_SHAPE)),
-            ("dtype", "float32"),
             ("duration_seconds", EXPECTED_SHAPE[0] / EXPECTED_SAMPLE_RATE_HZ),
-        )
+        ]
+        if not is_raw_mode:
+            optional_checks.append(("dtype", "float32"))
+
         for key, expected in optional_checks:
             if key in metadata and metadata[key] != expected:
                 warnings.append(
@@ -488,7 +571,7 @@ class FrameValidator:
         return warnings
 
     @staticmethod
-    def _calculate_statistics(samples: np.ndarray) -> tuple[LeadStatistics, ...]:
+    def _calculate_statistics(samples: np.ndarray, is_raw: bool = False) -> tuple[LeadStatistics, ...]:
         stats: list[LeadStatistics] = []
         for index, name in enumerate(EXPECTED_CHANNEL_ORDER):
             lead = samples[:, index]
@@ -546,12 +629,14 @@ def validate_frame(
     *,
     max_abs_mv: float = DEFAULT_MAX_ABS_MV,
     lead_iii_tolerance_mv: float = DEFAULT_LEAD_III_TOLERANCE_MV,
+    source_mode: str = "mv",
 ) -> ValidationResult:
     """Convenience wrapper around :class:`FrameValidator`."""
 
     validator = FrameValidator(
         max_abs_mv=max_abs_mv,
         lead_iii_tolerance_mv=lead_iii_tolerance_mv,
+        source_mode=source_mode,
     )
     return validator.validate(source, metadata=metadata)
 
@@ -559,8 +644,10 @@ def validate_frame(
 __all__ = [
     "DEFAULT_LEAD_III_TOLERANCE_MV",
     "DEFAULT_MAX_ABS_MV",
+    "DEFAULT_RAW_MAX_ABS",
     "EXPECTED_CHANNEL_ORDER",
     "EXPECTED_DTYPE",
+    "EXPECTED_RAW_UNIT",
     "EXPECTED_SAMPLE_RATE_HZ",
     "EXPECTED_SHAPE",
     "EXPECTED_UNIT",

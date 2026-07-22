@@ -34,6 +34,7 @@ output:
 
 runtime:
   status_interval_seconds: 5
+  launch_ecg_viewer: true
 
 device:
   device_id: esp32dev_dummy

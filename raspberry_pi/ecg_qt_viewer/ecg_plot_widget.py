@@ -17,6 +17,7 @@ from .ecg_grid_item import ECGGridItem, calculate_grid_spacing
 
 LEAD_NAMES = ("Lead I", "Lead II", "Lead III")
 PAPER_BACKGROUND = "#fffafa"
+ENGINEERING_BACKGROUND = "#f6f8fa"
 ECG_INK = "#352522"
 AXIS_INK = "#6d514c"
 
@@ -78,6 +79,12 @@ class ECGPlotWidget(QtWidgets.QWidget):
         self._syncing_y = False
         self._active_crosshair_plot: int | None = None
 
+        # Raw ADC mode properties
+        self._display_unit = "mv"  # "mv" or "count"
+        self._raw_y_scale = 10000.0
+        self._raw_grid_spacing = 1000.0
+        self._grid_style = "medical"  # "medical" or "engineering"
+
         self._clock = clock or time.monotonic
         self._replay_state = ReplayState.STOPPED
         self._replay_speed = 1.0
@@ -131,6 +138,7 @@ class ECGPlotWidget(QtWidgets.QWidget):
             grid = ECGGridItem(
                 self._paper_speed_mm_s,
                 self._gain_mm_mv,
+                raw_count_spacing=(self._raw_grid_spacing if self._display_unit == "count" else None),
             )
             plot.addItem(grid, ignoreBounds=True)
             grid.attach_to_viewbox(plot.getViewBox())
@@ -274,6 +282,11 @@ class ECGPlotWidget(QtWidgets.QWidget):
             if times.size > 1 and np.any(np.diff(times) <= 0.0):
                 raise ValueError("time array must be strictly increasing")
 
+        previous_x_range = (
+            tuple(float(value) for value in self.plots[0].viewRange()[0])
+            if self._source_data is not None
+            else None
+        )
         self.stop_replay(show_full=False)
         self._sample_rate = rate
         self._source_data = samples
@@ -282,6 +295,15 @@ class ECGPlotWidget(QtWidgets.QWidget):
         self._set_x_limits()
         self._render_sample_count(self.sample_count)
         self.reset_view()
+        if previous_x_range is not None:
+            # Replacing a frame or applying a display-only Raw View transform
+            # must not discard the operator's selected time window.  Clamp
+            # only when the new frame is shorter than the old visible range.
+            maximum = max(self.duration_s, 1e-9)
+            old_start, old_end = previous_x_range
+            span = min(max(old_end - old_start, 1e-9), maximum)
+            start = min(max(0.0, old_start), maximum - span)
+            self.plots[0].setXRange(start, start + span, padding=0.0)
         self.mouse_left()
 
     def clear_frame(self) -> None:
@@ -304,6 +326,73 @@ class ECGPlotWidget(QtWidgets.QWidget):
     @property
     def paper_speed_mm_s(self) -> float:
         return self._paper_speed_mm_s
+
+    @property
+    def display_unit(self) -> str:
+        """Current display unit: 'mV' or 'count'."""
+        return self._display_unit
+
+    def set_display_unit(self, unit: str) -> None:
+        """Set display unit to 'mV' or 'count'."""
+        normalized = str(unit).lower().strip()
+        if normalized not in ("mv", "count"):
+            raise ValueError(f"Invalid display unit: {unit!r}; expected 'mV' or 'count'")
+        self._display_unit = normalized
+
+        # Update grids based on unit
+        if normalized == "count":
+            for grid in self.grid_items:
+                grid.set_raw_count_spacing(self._raw_grid_spacing)
+        else:
+            for grid in self.grid_items:
+                grid.set_mv_mode()
+
+        axis_unit = "ADC count" if normalized == "count" else "mV"
+        for plot, lead_name in zip(self.plots, LEAD_NAMES):
+            left_axis = plot.getAxis("left")
+            # The values are already expressed in ADC count or mV.  Letting
+            # pyqtgraph add SI prefixes would produce misleading labels such
+            # as "mmV" or "kADC count" as the visible range changes.
+            left_axis.enableAutoSIPrefix(False)
+            left_axis.autoSIPrefixScale = 1.0
+            left_axis.labelUnitPrefix = ""
+            left_axis.setScale(1.0)
+            plot.setLabel("left", lead_name, units=axis_unit)
+            plot.setLabel("bottom", "Time", units="s")
+
+        self._update_physical_geometry()
+
+    def set_grid_style(self, style: str) -> None:
+        """Set grid style to 'medical' or 'engineering'."""
+        normalized = str(style).lower().strip()
+        if normalized not in ("medical", "engineering"):
+            raise ValueError(f"Invalid grid style: {style!r}; expected 'medical' or 'engineering'")
+        self._grid_style = normalized
+
+        # Update background color
+        if normalized == "engineering":
+            self.graphics_widget.setBackground(ENGINEERING_BACKGROUND)
+            self.graphics_widget.setStyleSheet(
+                f"background-color: {ENGINEERING_BACKGROUND}; border: 0;"
+            )
+            self.scroll_area.setStyleSheet(
+                f"background: {ENGINEERING_BACKGROUND};"
+            )
+        else:
+            # Pink ECG paper background for medical display
+            self.graphics_widget.setBackground(PAPER_BACKGROUND)
+            self.graphics_widget.setStyleSheet(
+                f"background-color: {PAPER_BACKGROUND}; border: 0;"
+            )
+            self.scroll_area.setStyleSheet(f"background: {PAPER_BACKGROUND};")
+
+        # Update grid style
+        for grid in self.grid_items:
+            grid.set_style(normalized)
+
+    @property
+    def grid_style(self) -> str:
+        return self._grid_style
 
     def set_paper_speed(self, speed_mm_s: float) -> None:
         # The mapping function performs strict support validation.
@@ -347,6 +436,31 @@ class ECGPlotWidget(QtWidgets.QWidget):
                 -self._y_range_mv, self._y_range_mv, padding=0.0
             )
         self._update_physical_geometry()
+
+    @property
+    def raw_y_scale(self) -> float:
+        return self._raw_y_scale
+
+    def set_raw_y_scale(self, half_range_count: float) -> None:
+        """Set Y range for raw ADC count mode."""
+        self._raw_y_scale = _positive_finite(half_range_count, "raw Y scale")
+        self._auto_y_active = False
+        if self._display_unit == "count":
+            for plot in self.plots:
+                plot.setYRange(
+                    -self._raw_y_scale, self._raw_y_scale, padding=0.0
+                )
+
+    @property
+    def raw_grid_spacing(self) -> float:
+        return self._raw_grid_spacing
+
+    def set_raw_grid_spacing(self, spacing: float) -> None:
+        """Set vertical grid spacing for raw ADC count mode."""
+        self._raw_grid_spacing = _positive_finite(spacing, "raw grid spacing")
+        if self._display_unit == "count":
+            for grid in self.grid_items:
+                grid.set_raw_count_spacing(spacing)
 
     @property
     def lead_mode(self) -> str:
@@ -417,28 +531,31 @@ class ECGPlotWidget(QtWidgets.QWidget):
         x_end = self._default_x_end()
         for plot in self.plots:
             plot.setXRange(0.0, x_end, padding=0.0)
-            plot.setYRange(
-                -self._y_range_mv, self._y_range_mv, padding=0.0
-            )
+            # Use appropriate Y range based on display unit
+            if self._display_unit == "count":
+                plot.setYRange(-self._raw_y_scale, self._raw_y_scale, padding=0.0)
+            else:
+                plot.setYRange(-self._y_range_mv, self._y_range_mv, padding=0.0)
         self._update_physical_geometry()
 
     def auto_scale_y(self) -> None:
         if self._source_data is None or self._source_data.size == 0:
             return
         self._auto_y_active = True
-        if self._synchronize_y_ranges:
-            low = float(np.min(self._source_data))
-            high = float(np.max(self._source_data))
-            low, high = _padded_range(low, high)
-            for plot in self.plots:
-                plot.setYRange(low, high, padding=0.0)
-        else:
+        # Auto Y is deliberately independent per lead.  In particular, raw
+        # ADC channels can have very different offsets and amplitudes.  Keep
+        # Sync Y as a manual pan/zoom aid without letting its range-change
+        # signal collapse these independently calculated ranges.
+        self._syncing_y = True
+        try:
             for index, plot in enumerate(self.plots):
                 values = self._source_data[:, index]
                 low, high = _padded_range(
                     float(np.min(values)), float(np.max(values))
                 )
                 plot.setYRange(low, high, padding=0.0)
+        finally:
+            self._syncing_y = False
         self._update_physical_geometry(use_current_y_ranges=True)
 
     auto_y = auto_scale_y
@@ -622,11 +739,14 @@ class ECGPlotWidget(QtWidgets.QWidget):
                 horizontal.hide()
         for index, label in enumerate(self.crosshair_labels):
             if index == active_index:
+                # Use appropriate unit based on display mode
+                unit = "mV" if self._display_unit == "mv" else "count"
+                value_format = ".6f" if self._display_unit == "mv" else ".0f"
                 label.setText(
                     f"t: {timestamp:.3f} s\n"
-                    f"Lead I: {float(values[0]):.6f} mV\n"
-                    f"Lead II: {float(values[1]):.6f} mV\n"
-                    f"Lead III: {float(values[2]):.6f} mV"
+                    f"Lead I: {float(values[0]):{value_format}} {unit}\n"
+                    f"Lead II: {float(values[1]):{value_format}} {unit}\n"
+                    f"Lead III: {float(values[2]):{value_format}} {unit}"
                 )
                 x_range, y_range = plot.viewRange()
                 label.setPos(
@@ -690,6 +810,26 @@ class ECGPlotWidget(QtWidgets.QWidget):
         The selected clinical range has exact target density after Reset View.
         User zoom intentionally overrides that clinical scale until reset.
         """
+
+        if self._display_unit == "count":
+            # Raw ADC is not paper.  Give it a stable, readable engineering
+            # canvas instead of multiplying count ranges by clinical mm/mV.
+            plot_width = max(600.0, self._time_window_s * 90.0)
+            plot_heights = [180.0] * len(self.plots)
+            for plot in self.plots:
+                view_box = plot.getViewBox()
+                view_box.setMinimumWidth(plot_width)
+                view_box.setMaximumWidth(plot_width)
+                view_box.setMinimumHeight(180.0)
+                view_box.setMaximumHeight(180.0)
+
+            visible_count = 3 if self._lead_mode == "All leads" else 1
+            self.graphics_widget.setFixedSize(
+                int(math.ceil(plot_width + 105.0)),
+                int(math.ceil(234.0 * visible_count + 12.0)),
+            )
+            self.graphics_widget.updateGeometry()
+            return
 
         dpi_x, dpi_y = self._logical_dpi()
         pixels_per_mm_x = dpi_x / 25.4 * self._display_scale_factor

@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from calibration_utils import CHANNEL_ORDER, CalibrationError, EXPECTED_SHAPE
 from replay_dataset import replay_dataset
+
+try:
+    import receiver
+except ModuleNotFoundError as error:
+    if error.name != "serial":
+        raise
+    serial_stub = types.ModuleType("serial")
+    serial_stub.Serial = object
+    serial_stub.SerialException = OSError
+    with mock.patch.dict(sys.modules, {"serial": serial_stub}):
+        receiver = importlib.import_module("receiver")
 
 
 class Phase3HPipelineTests(unittest.TestCase):
@@ -224,6 +239,53 @@ class Phase3HPipelineTests(unittest.TestCase):
         self.assertEqual(len(list((self.output_dir / "calibrated").glob("*.json"))), 2)
         self.assertEqual(len(list((self.output_dir / "model_ready").glob("*.npy"))), 2)
         self.assertTrue((self.output_dir / "replay_summary.json").exists())
+
+    def test_receiver_launches_raw_follow_live_viewer(self) -> None:
+        process = mock.Mock(pid=4321)
+        with mock.patch.object(
+            receiver.subprocess, "Popen", return_value=process
+        ) as popen:
+            launched = receiver.launch_ecg_viewer(
+                self.input_dir, Path(sys.executable)
+            )
+
+        self.assertIs(launched, process)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], str(Path(sys.executable).absolute()))
+        self.assertEqual(command[1:3], ["-m", "ecg_qt_viewer.main"])
+        self.assertIn(str(self.input_dir.resolve()), command)
+        self.assertIn("raw", command)
+        self.assertIn("--follow-live", command)
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(receiver.SCRIPT_DIR))
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
+    def test_receiver_preserves_gui_virtualenv_python_symlink(self) -> None:
+        selected = receiver.resolve_gui_python(None, self.root)
+        self.assertEqual(selected, receiver.DEFAULT_GUI_PYTHON)
+        self.assertIn("venv_gui/bin/python", str(selected))
+
+    def test_receiver_shutdown_closes_owned_viewer(self) -> None:
+        process = mock.Mock()
+        process.poll.return_value = None
+
+        receiver.stop_ecg_viewer(process)
+
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(
+            timeout=receiver.GUI_SHUTDOWN_TIMEOUT_SEC
+        )
+
+    def test_receiver_shutdown_ignores_manually_closed_viewer(self) -> None:
+        process = mock.Mock()
+        process.poll.return_value = 0
+
+        receiver.stop_ecg_viewer(process)
+
+        process.terminate.assert_not_called()
+
+    def test_sigterm_uses_receiver_cleanup_path(self) -> None:
+        with self.assertRaises(KeyboardInterrupt):
+            receiver.handle_receiver_termination(15, None)
 
 
 if __name__ == "__main__":

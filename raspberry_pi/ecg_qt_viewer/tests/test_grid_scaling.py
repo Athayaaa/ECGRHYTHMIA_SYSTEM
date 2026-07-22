@@ -54,6 +54,16 @@ class GridScalingTests(unittest.TestCase):
                         (spacing.minor_y, spacing.major_y), y_spacing
                     )
 
+    def test_raw_grid_uses_engineering_time_intervals(self) -> None:
+        spacing = calculate_grid_spacing(25, 10, raw_count_spacing=1000)
+        self.assertEqual((spacing.minor_x, spacing.major_x), (0.1, 0.5))
+        self.assertEqual((spacing.minor_y, spacing.major_y), (1000, 5000))
+
+    def test_raw_vertical_grid_does_not_depend_on_paper_speed_or_gain(self) -> None:
+        first = calculate_grid_spacing(25, 5, raw_count_spacing=500)
+        second = calculate_grid_spacing(50, 20, raw_count_spacing=500)
+        self.assertEqual(first, second)
+
     def test_visible_line_values_include_boundaries_and_zero(self) -> None:
         values = grid_line_values(-0.1, 0.1, 0.05)
         self.assertEqual(values, (-0.1, -0.05, 0.0, 0.05, 0.1))

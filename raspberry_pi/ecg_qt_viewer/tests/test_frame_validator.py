@@ -89,7 +89,7 @@ class FrameValidatorTests(unittest.TestCase):
         self.assertFalse(result.can_plot)
         self.assertTrue(any("Inf" in reason for reason in result.errors))
 
-    def test_excessive_amplitude_fails_above_ten_mv(self) -> None:
+    def test_excessive_amplitude_fails_but_remains_plotable(self) -> None:
         samples = make_valid_samples()
         samples[100, 0] = np.float32(10.01)
         samples[100, 2] = samples[100, 1] - samples[100, 0]
@@ -97,7 +97,7 @@ class FrameValidatorTests(unittest.TestCase):
         result = self.validator.validate(samples, valid_metadata())
 
         self.assertEqual(result.status, ValidationStatus.FAIL)
-        self.assertFalse(result.can_plot)
+        self.assertTrue(result.can_plot)
         self.assertGreater(result.max_abs_mv, 10.0)  # type: ignore[operator]
         self.assertTrue(any("limit" in reason for reason in result.errors))
 

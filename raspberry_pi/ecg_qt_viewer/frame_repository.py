@@ -1,8 +1,8 @@
-"""Read-only discovery and navigation for calibrated ECG frames.
+"""Read-only discovery and navigation for ECG frames.
 
-Only canonical ``frame_<number>_mv.npy`` files are considered frames.  CSV
-exports and temporary files are deliberately ignored: NPY is the viewer's
-single source of sample data.
+Supports both raw ADC frames (``frame_<number>.npy``) and calibrated mV frames
+(``frame_<number>_mv.npy``).  CSV exports and temporary files are deliberately
+ignored: NPY is the viewer's single source of sample data.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from typing import Any, Iterator
 import numpy as np
 
 
-FRAME_FILENAME_PATTERN = re.compile(r"^frame_(?P<frame_id>\d+)_mv\.npy$")
+FRAME_FILENAME_PATTERN_MV = re.compile(r"^frame_(?P<frame_id>\d+)_mv\.npy$")
+FRAME_FILENAME_PATTERN_RAW = re.compile(r"^frame_(?P<frame_id>\d+)\.npy$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +67,21 @@ class FrameRecord:
 class FrameRepository:
     """Maintain a numerically sorted, read-only view of an ECG directory."""
 
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(self, data_dir: str | Path, *, source_mode: str = "mv") -> None:
         self._data_dir = Path(data_dir).expanduser().resolve()
+        self._source_mode = self._normalize_source_mode(source_mode)
         self._frames: tuple[FrameRecord, ...] = ()
         self._by_id: dict[int, FrameRecord] = {}
+
+    @staticmethod
+    def _normalize_source_mode(mode: str) -> str:
+        """Normalize source mode to 'raw' or 'mv'."""
+        normalized = str(mode).lower().strip()
+        if normalized in ("raw", "raw adc", "adc"):
+            return "raw"
+        if normalized in ("mv", "calibrated", "calibrated mv"):
+            return "mv"
+        raise ValueError(f"Invalid source mode: {mode!r}; expected 'raw' or 'mv'")
 
     @property
     def data_dir(self) -> Path:
@@ -77,10 +89,22 @@ class FrameRepository:
 
         return self._data_dir
 
-    def set_data_dir(self, data_dir: str | Path) -> tuple[FrameRecord, ...]:
+    @property
+    def source_mode(self) -> str:
+        """Current source mode: 'raw' or 'mv'."""
+        return self._source_mode
+
+    def set_source_mode(self, mode: str) -> tuple[FrameRecord, ...]:
+        """Change source mode and refresh the frame list."""
+        self._source_mode = self._normalize_source_mode(mode)
+        return self.refresh()
+
+    def set_data_dir(self, data_dir: str | Path, *, source_mode: str | None = None) -> tuple[FrameRecord, ...]:
         """Select ``data_dir`` and immediately refresh the cached frame list."""
 
         self._data_dir = Path(data_dir).expanduser().resolve()
+        if source_mode is not None:
+            self._source_mode = self._normalize_source_mode(source_mode)
         self._frames = ()
         self._by_id = {}
         return self.refresh()
@@ -98,9 +122,12 @@ class FrameRepository:
             self._by_id = {}
             return self._frames
 
+        # Select pattern based on source mode
+        pattern = FRAME_FILENAME_PATTERN_MV if self._source_mode == "mv" else FRAME_FILENAME_PATTERN_RAW
+
         records: list[FrameRecord] = []
         for path in self._iter_directory():
-            match = FRAME_FILENAME_PATTERN.fullmatch(path.name)
+            match = pattern.fullmatch(path.name)
             if match is None or not path.is_file():
                 continue
 
@@ -216,7 +243,8 @@ class FrameRepository:
 
 
 __all__ = [
-    "FRAME_FILENAME_PATTERN",
+    "FRAME_FILENAME_PATTERN_MV",
+    "FRAME_FILENAME_PATTERN_RAW",
     "FrameRecord",
     "FrameRepository",
 ]

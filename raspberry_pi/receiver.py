@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+import signal
 import struct
+import subprocess
 import sys
 import time
 from typing import Any
@@ -27,6 +30,9 @@ from window_exporter import FrameExportPaths, WindowExporter
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_GUI_PYTHON = SCRIPT_DIR / "venv_gui" / "bin" / "python"
+GUI_SHUTDOWN_TIMEOUT_SEC = 3.0
 DEFAULT_COMMAND_DELAY_SEC = 0.25
 DEFAULT_ADS1293_BOOT_DELAY_SEC = 6.0
 DEFAULT_STREAM_DETECT_TIMEOUT_SEC = 5.0
@@ -72,6 +78,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Stop after exporting this many frames; 0 means run until interrupted",
+    )
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="Run the receiver without automatically opening the ECG viewer",
+    )
+    parser.add_argument(
+        "--gui-python",
+        type=Path,
+        help="Python executable for the ECG viewer (default: venv_gui/bin/python)",
     )
     return parser.parse_args()
 
@@ -223,6 +239,9 @@ def main() -> int:
             config_path.parent / model_ready_preprocessing_config_path
         )
     status_interval_seconds = float(runtime_config.get("status_interval_seconds", 5))
+    launch_gui = bool(runtime_config.get("launch_ecg_viewer", True)) and not args.no_gui
+    configured_gui_python = args.gui_python or runtime_config.get("ecg_viewer_python")
+    gui_python = resolve_gui_python(configured_gui_python, config_path.parent)
     device_id = str(device_config.get("device_id", "esp32dev_dummy"))
     state = str(device_config.get("state", "stored"))
 
@@ -245,8 +264,16 @@ def main() -> int:
         else 1
     )
     serial_session_attempt = 1
+    gui_process: subprocess.Popen[bytes] | None = None
+    previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, handle_receiver_termination)
 
     try:
+        gui_process = (
+            launch_ecg_viewer(output_dir, gui_python)
+            if launch_gui
+            else None
+        )
         while serial_session_attempt <= serial_session_count:
             if serial_session_count > 1:
                 print(
@@ -379,8 +406,88 @@ def main() -> int:
         print("receiver stopped")
         return 0
     finally:
+        stop_ecg_viewer(gui_process)
         exporter.close()
         metadata_store.close()
+        signal.signal(signal.SIGTERM, previous_sigterm_handler)
+
+
+def handle_receiver_termination(_signum: int, _frame: Any) -> None:
+    """Route SIGTERM through the normal KeyboardInterrupt cleanup path."""
+
+    raise KeyboardInterrupt
+
+
+def resolve_gui_python(
+    configured_value: str | Path | None,
+    config_directory: Path,
+) -> Path:
+    """Return the dedicated GUI interpreter, with a receiver-env fallback."""
+
+    if configured_value:
+        candidate = Path(configured_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = config_directory / candidate
+        return Path(os.path.abspath(candidate))
+    if DEFAULT_GUI_PYTHON.is_file():
+        # Do not resolve the venv's python symlink to /usr/bin/python: invoking
+        # the symlink itself is what activates the virtualenv site-packages.
+        return DEFAULT_GUI_PYTHON
+    return Path(os.path.abspath(sys.executable))
+
+
+def launch_ecg_viewer(
+    output_dir: str | Path,
+    python_executable: str | Path,
+) -> subprocess.Popen[bytes] | None:
+    """Open the standalone viewer as an owned child of the receiver."""
+
+    executable = Path(os.path.abspath(Path(python_executable).expanduser()))
+    if not executable.is_file():
+        print(
+            f"warning: ECG viewer not started; Python not found: {executable}",
+            file=sys.stderr,
+        )
+        return None
+
+    data_dir = Path(output_dir).expanduser().resolve()
+    command = [
+        str(executable),
+        "-m",
+        "ecg_qt_viewer.main",
+        "--data-dir",
+        str(data_dir),
+        "--source-mode",
+        "raw",
+        "--follow-live",
+    ]
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(SCRIPT_DIR),
+            env=os.environ.copy(),
+            start_new_session=True,
+        )
+    except OSError as error:
+        print(f"warning: ECG viewer could not start: {error}", file=sys.stderr)
+        return None
+
+    print(f"ECG viewer started pid={process.pid} data_dir={data_dir}")
+    return process
+
+
+def stop_ecg_viewer(process: subprocess.Popen[bytes] | None) -> None:
+    """Close a viewer launched by this receiver, tolerating manual closure."""
+
+    if process is None or process.poll() is not None:
+        return
+    print("closing ECG viewer")
+    process.terminate()
+    try:
+        process.wait(timeout=GUI_SHUTDOWN_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 def disable_modem_control(serial_port: serial.Serial) -> None:

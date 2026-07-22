@@ -24,6 +24,12 @@ Y_RANGES_MV = (0.5, 1.0, 2.0, 5.0)
 LEAD_MODES = ("All leads", "Lead I", "Lead II", "Lead III")
 REPLAY_SPEEDS = (0.5, 1.0, 2.0)
 
+# Raw ADC mode settings
+DATA_MODES = ("Raw ADC", "Calibrated mV")
+RAW_VIEW_MODES = ("Absolute Code", "Zero-Centered", "Median-Centered")
+RAW_Y_SCALES = (1000.0, 2500.0, 5000.0, 10000.0, 25000.0, 50000.0)
+RAW_GRID_SPACINGS = (100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0)
+
 
 @dataclass(frozen=True, slots=True)
 class ViewerSettings:
@@ -42,6 +48,10 @@ class ViewerSettings:
     replay_speed: float = 1.0
     lock_view: bool = False
     synchronize_y_ranges: bool = False
+    data_mode: str = "Calibrated mV"
+    raw_view_mode: str = "Absolute Code"
+    raw_y_scale: float = 10000.0
+    raw_grid_spacing: float = 1000.0
 
     @property
     def gain_mm_mv(self) -> float:
@@ -80,6 +90,18 @@ class ViewerSettings:
             replay_speed=_choice_or_default(
                 self.replay_speed, REPLAY_SPEEDS, 1.0
             ),
+            data_mode=(
+                self.data_mode if self.data_mode in DATA_MODES else "Calibrated mV"
+            ),
+            raw_view_mode=(
+                self.raw_view_mode if self.raw_view_mode in RAW_VIEW_MODES else "Absolute Code"
+            ),
+            raw_y_scale=_choice_or_default(
+                self.raw_y_scale, RAW_Y_SCALES, 10000.0
+            ),
+            raw_grid_spacing=_choice_or_default(
+                self.raw_grid_spacing, RAW_GRID_SPACINGS, 1000.0
+            ),
         )
 
     @classmethod
@@ -106,6 +128,10 @@ _KEYS = {
     "replay_speed": "replay/speed",
     "lock_view": "display/lock_view",
     "synchronize_y_ranges": "display/synchronize_y_ranges",
+    "data_mode": "display/data_mode",
+    "raw_view_mode": "display/raw_view_mode",
+    "raw_y_scale": "display/raw_y_scale",
+    "raw_grid_spacing": "display/raw_grid_spacing",
 }
 
 
@@ -179,6 +205,16 @@ def load_viewer_settings(
                 defaults.synchronize_y_ranges,
             ),
             defaults.synchronize_y_ranges,
+        ),
+        data_mode=str(store.value(_KEYS["data_mode"], defaults.data_mode)),
+        raw_view_mode=str(store.value(_KEYS["raw_view_mode"], defaults.raw_view_mode)),
+        raw_y_scale=_as_float(
+            store.value(_KEYS["raw_y_scale"], defaults.raw_y_scale),
+            defaults.raw_y_scale,
+        ),
+        raw_grid_spacing=_as_float(
+            store.value(_KEYS["raw_grid_spacing"], defaults.raw_grid_spacing),
+            defaults.raw_grid_spacing,
         ),
     )
     return loaded.normalized()
@@ -415,11 +451,15 @@ save_settings = save_viewer_settings
 
 __all__ = [
     "APPLICATION_NAME",
+    "DATA_MODES",
     "DisplayCalibrationDialog",
     "GAINS_MM_MV",
     "LEAD_MODES",
     "ORGANIZATION_NAME",
     "PAPER_SPEEDS_MM_S",
+    "RAW_GRID_SPACINGS",
+    "RAW_VIEW_MODES",
+    "RAW_Y_SCALES",
     "REPLAY_SPEEDS",
     "TIME_WINDOWS_S",
     "ViewerSettings",

@@ -21,16 +21,21 @@ DEFAULT_DATA_DIR = RASPBERRY_PI_DIR / "data" / "calibrated"
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="View calibrated ECGRHYTHMIA 10-second ECG frames"
+        description="View ECGRHYTHMIA 10-second ECG frames (raw ADC or calibrated mV)"
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
-        help=f"Directory containing frame_*_mv.npy files (default: {DEFAULT_DATA_DIR})",
+        help=f"Directory containing frame files (default: {DEFAULT_DATA_DIR})",
+    )
+    parser.add_argument(
+        "--source-mode",
+        choices=("raw", "mv"),
+        help="Source mode: 'raw' for raw ADC (frame_*.npy), 'mv' for calibrated mV (frame_*_mv.npy)",
     )
     parser.add_argument(
         "--initial-frame",
-        help="Initial numeric frame ID or name such as frame_000042_mv",
+        help="Initial numeric frame ID or name such as frame_000042_mv or frame_000042",
     )
     parser.add_argument(
         "--follow-live",
@@ -74,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         paper_speed_mm_s=args.speed_mm_s,
         gain_mm_mv=args.gain_mm_mv,
         y_range_mv=args.y_range_mv,
+        source_mode=args.source_mode,
     )
     window.show()
 
