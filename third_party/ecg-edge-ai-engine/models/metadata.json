@@ -1,0 +1,14 @@
+{
+    "model_name": "Pure CNN Multi Class 500Hz to 250Hz",
+    "version": "1.0.0",
+    "input_length": 2500,
+    "sampling_rate": 250.0,
+    "labels": [
+        "Normal",
+        "AF",
+        "Takikardia",
+        "Bradikardia"
+    ],
+    "threshold": 0.5,
+    "preprocessing_version": "v5.0_research_grade"
+}

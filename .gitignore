@@ -10,8 +10,10 @@ esp32_firmware/.vscode/
 __pycache__/
 *.pyc
 venv/
+venv_ai/
 venv_gui/
 venv_oled/
+*.egg-info/
 .env
 
 # Data hasil pengujian
