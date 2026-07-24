@@ -26,6 +26,7 @@ EXPECTED_SAMPLE_RATE_HZ = 250
 EXPECTED_UNIT = "mV"
 EXPECTED_CHANNEL_ORDER = ("Lead I", "Lead II", "Lead III")
 DEFAULT_MAX_ABS_MV = 10.0
+DEFAULT_BASELINE_WARNING_MV = 5.0
 DEFAULT_LEAD_III_TOLERANCE_MV = 1e-5
 
 # Raw ADC mode expectations
@@ -84,6 +85,9 @@ class ValidationResult:
     source_shape: tuple[int, ...] | None
     source_dtype: str | None
     max_abs_mv: float | None
+    baseline_median_mv: tuple[float, ...] | None
+    centered_max_abs_mv: float | None
+    peak_to_peak_mv: tuple[float, ...] | None
     lead_iii_max_error_mv: float | None
     per_lead_stats: tuple[LeadStatistics, ...]
 
@@ -150,13 +154,17 @@ class FrameValidator:
         max_abs_mv: float = DEFAULT_MAX_ABS_MV,
         lead_iii_tolerance_mv: float = DEFAULT_LEAD_III_TOLERANCE_MV,
         source_mode: str = "mv",
+        baseline_warning_mv: float = DEFAULT_BASELINE_WARNING_MV,
     ) -> None:
         if max_abs_mv <= 0:
             raise ValueError("max_abs_mv must be positive")
         if lead_iii_tolerance_mv < 0:
             raise ValueError("lead_iii_tolerance_mv must not be negative")
+        if baseline_warning_mv <= 0:
+            raise ValueError("baseline_warning_mv must be positive")
         self.max_abs_limit_mv = float(max_abs_mv)
         self.lead_iii_tolerance_mv = float(lead_iii_tolerance_mv)
+        self.baseline_warning_mv = float(baseline_warning_mv)
         self.source_mode = self._normalize_source_mode(source_mode)
 
     @staticmethod
@@ -281,6 +289,9 @@ class FrameValidator:
                 source_shape=None,
                 source_dtype=None,
                 max_abs_mv=None,
+                baseline_median_mv=None,
+                centered_max_abs_mv=None,
+                peak_to_peak_mv=None,
                 lead_iii_error=None,
                 statistics=(),
             )
@@ -332,6 +343,9 @@ class FrameValidator:
                 source_shape=None,
                 source_dtype=None,
                 max_abs_mv=None,
+                baseline_median_mv=None,
+                centered_max_abs_mv=None,
+                peak_to_peak_mv=None,
                 lead_iii_error=None,
                 statistics=(),
             )
@@ -359,6 +373,9 @@ class FrameValidator:
                 source_shape=source_shape,
                 source_dtype=source_dtype,
                 max_abs_mv=None,
+                baseline_median_mv=None,
+                centered_max_abs_mv=None,
+                peak_to_peak_mv=None,
                 lead_iii_error=None,
                 statistics=(),
             )
@@ -374,6 +391,9 @@ class FrameValidator:
                 source_shape=source_shape,
                 source_dtype=source_dtype,
                 max_abs_mv=None,
+                baseline_median_mv=None,
+                centered_max_abs_mv=None,
+                peak_to_peak_mv=None,
                 lead_iii_error=None,
                 statistics=(),
             )
@@ -401,6 +421,9 @@ class FrameValidator:
                 source_shape=source_shape,
                 source_dtype=source_dtype,
                 max_abs_mv=None,
+                baseline_median_mv=None,
+                centered_max_abs_mv=None,
+                peak_to_peak_mv=None,
                 lead_iii_error=None,
                 statistics=(),
             )
@@ -418,18 +441,56 @@ class FrameValidator:
             plot_samples = None
 
         max_abs_mv: float | None = None
+        baseline_median_mv: tuple[float, ...] | None = None
+        centered_max_abs_mv: float | None = None
+        peak_to_peak_mv: tuple[float, ...] | None = None
         lead_iii_error: float | None = None
         statistics: tuple[LeadStatistics, ...] = ()
 
         if diagnostic.size and finite:
             max_abs_mv = float(np.max(np.abs(diagnostic)))
 
-            # For mV mode, apply clinical amplitude limit
-            if not is_raw_mode and max_abs_mv > self.max_abs_limit_mv:
-                errors.append(
-                    f"Maximum absolute amplitude is {max_abs_mv:.6g} mV; "
-                    f"limit is {self.max_abs_limit_mv:.6g} mV."
-                )
+            if not is_raw_mode and source_shape == EXPECTED_SHAPE:
+                # Compute per-lead baseline and centered amplitude metrics
+                # without modifying the source array.
+                per_lead_medians: list[float] = []
+                per_lead_centered_max: list[float] = []
+                per_lead_ptp: list[float] = []
+                for ch in range(EXPECTED_SHAPE[1]):
+                    lead = diagnostic[:, ch]
+                    med = float(np.median(lead))
+                    per_lead_medians.append(med)
+                    centered = lead - med
+                    per_lead_centered_max.append(float(np.max(np.abs(centered))))
+                    per_lead_ptp.append(float(np.max(lead) - np.min(lead)))
+
+                baseline_median_mv = tuple(per_lead_medians)
+                centered_max_abs_mv = float(max(per_lead_centered_max))
+                peak_to_peak_mv = tuple(per_lead_ptp)
+
+                # Centered amplitude limit: FAIL only if dynamic range
+                # (after removing DC baseline) exceeds the limit.
+                if centered_max_abs_mv > self.max_abs_limit_mv:
+                    errors.append(
+                        f"Centered maximum amplitude is {centered_max_abs_mv:.6g} mV; "
+                        f"limit is {self.max_abs_limit_mv:.6g} mV."
+                    )
+
+                # Baseline warning: large DC offset is clinically relevant
+                # but does not invalidate the dynamic ECG waveform.
+                baseline_warning_leads: list[str] = []
+                for ch, (name, med) in enumerate(
+                    zip(EXPECTED_CHANNEL_ORDER, per_lead_medians)
+                ):
+                    if abs(med) > self.baseline_warning_mv:
+                        baseline_warning_leads.append(
+                            f"{name}: {med:+.2f} mV"
+                        )
+                if baseline_warning_leads:
+                    warnings.append(
+                        f"Large DC baseline on {', '.join(baseline_warning_leads)}. "
+                        f"Dynamic ECG amplitude remains within limit."
+                    )
 
             # For raw mode, validate ADC range if ADCMAX available
             if is_raw_mode and metadata:
@@ -489,18 +550,9 @@ class FrameValidator:
             source_shape=source_shape,
             source_dtype=source_dtype,
             max_abs_mv=max_abs_mv,
-            lead_iii_error=lead_iii_error,
-            statistics=statistics,
-        )
-
-        return self._result(
-            errors=errors,
-            warnings=warnings,
-            samples=plot_samples,
-            metadata=metadata,
-            source_shape=source_shape,
-            source_dtype=source_dtype,
-            max_abs_mv=max_abs_mv,
+            baseline_median_mv=baseline_median_mv,
+            centered_max_abs_mv=centered_max_abs_mv,
+            peak_to_peak_mv=peak_to_peak_mv,
             lead_iii_error=lead_iii_error,
             statistics=statistics,
         )
@@ -596,6 +648,9 @@ class FrameValidator:
         source_shape: tuple[int, ...] | None,
         source_dtype: str | None,
         max_abs_mv: float | None,
+        baseline_median_mv: tuple[float, ...] | None,
+        centered_max_abs_mv: float | None,
+        peak_to_peak_mv: tuple[float, ...] | None,
         lead_iii_error: float | None,
         statistics: tuple[LeadStatistics, ...],
     ) -> ValidationResult:
@@ -618,6 +673,9 @@ class FrameValidator:
             source_shape=source_shape,
             source_dtype=source_dtype,
             max_abs_mv=max_abs_mv,
+            baseline_median_mv=baseline_median_mv,
+            centered_max_abs_mv=centered_max_abs_mv,
+            peak_to_peak_mv=peak_to_peak_mv,
             lead_iii_max_error_mv=lead_iii_error,
             per_lead_stats=statistics,
         )
@@ -630,6 +688,7 @@ def validate_frame(
     max_abs_mv: float = DEFAULT_MAX_ABS_MV,
     lead_iii_tolerance_mv: float = DEFAULT_LEAD_III_TOLERANCE_MV,
     source_mode: str = "mv",
+    baseline_warning_mv: float = DEFAULT_BASELINE_WARNING_MV,
 ) -> ValidationResult:
     """Convenience wrapper around :class:`FrameValidator`."""
 
@@ -637,11 +696,13 @@ def validate_frame(
         max_abs_mv=max_abs_mv,
         lead_iii_tolerance_mv=lead_iii_tolerance_mv,
         source_mode=source_mode,
+        baseline_warning_mv=baseline_warning_mv,
     )
     return validator.validate(source, metadata=metadata)
 
 
 __all__ = [
+    "DEFAULT_BASELINE_WARNING_MV",
     "DEFAULT_LEAD_III_TOLERANCE_MV",
     "DEFAULT_MAX_ABS_MV",
     "DEFAULT_RAW_MAX_ABS",

@@ -90,16 +90,19 @@ class FrameValidatorTests(unittest.TestCase):
         self.assertTrue(any("Inf" in reason for reason in result.errors))
 
     def test_excessive_amplitude_fails_but_remains_plotable(self) -> None:
-        samples = make_valid_samples()
-        samples[100, 0] = np.float32(10.01)
+        """Centered amplitude > 10 mV should FAIL (dynamic range too large)."""
+        samples = np.zeros(EXPECTED_SHAPE, dtype=np.float32)
+        # Baseline 0, so centered == absolute. +11 mV exceeds limit.
+        samples[100, 0] = np.float32(11.0)
         samples[100, 2] = samples[100, 1] - samples[100, 0]
 
         result = self.validator.validate(samples, valid_metadata())
 
         self.assertEqual(result.status, ValidationStatus.FAIL)
         self.assertTrue(result.can_plot)
-        self.assertGreater(result.max_abs_mv, 10.0)  # type: ignore[operator]
-        self.assertTrue(any("limit" in reason for reason in result.errors))
+        self.assertIsNotNone(result.centered_max_abs_mv)
+        self.assertGreater(result.centered_max_abs_mv, 10.0)
+        self.assertTrue(any("Centered" in reason for reason in result.errors))
 
     def test_exactly_ten_mv_is_not_excessive(self) -> None:
         samples = make_valid_samples()
@@ -111,6 +114,92 @@ class FrameValidatorTests(unittest.TestCase):
 
         self.assertEqual(result.status, ValidationStatus.PASS)
         self.assertTrue(result.can_plot)
+
+    def test_large_baseline_small_variation_is_warning(self) -> None:
+        """Frame with baseline -10 mV and variation ±1 mV → WARNING not FAIL."""
+        samples = np.zeros(EXPECTED_SHAPE, dtype=np.float32)
+        lead_i = np.linspace(-1.5, -0.5, EXPECTED_SHAPE[0], dtype=np.float32)
+        lead_ii = np.linspace(-10.5, -9.5, EXPECTED_SHAPE[0], dtype=np.float32)
+        lead_iii = lead_ii - lead_i
+        samples[:, 0] = lead_i
+        samples[:, 1] = lead_ii
+        samples[:, 2] = lead_iii
+
+        result = self.validator.validate(samples, valid_metadata())
+
+        # Must be WARNING, not FAIL
+        self.assertEqual(result.status, ValidationStatus.WARNING)
+        self.assertTrue(result.can_plot)
+        self.assertIsNotNone(result.centered_max_abs_mv)
+        self.assertLess(result.centered_max_abs_mv, 2.0)
+        self.assertGreater(result.max_abs_mv, 10.0)
+        self.assertTrue(any("Large DC baseline" in w for w in result.warnings))
+        self.assertEqual(len(result.errors), 0)
+
+    def test_baseline_zero_with_large_centered_amplitude_fails(self) -> None:
+        """Baseline 0 mV with variation ±11 mV → FAIL."""
+        samples = np.zeros(EXPECTED_SHAPE, dtype=np.float32)
+        samples[:, 0] = np.sin(
+            np.linspace(0, 4 * np.pi, EXPECTED_SHAPE[0])
+        ).astype(np.float32) * 11.0
+        samples[:, 1] = np.sin(
+            np.linspace(0, 4 * np.pi, EXPECTED_SHAPE[0])
+        ).astype(np.float32) * 11.0
+        samples[:, 2] = samples[:, 1] - samples[:, 0]
+
+        result = self.validator.validate(samples, valid_metadata())
+
+        self.assertEqual(result.status, ValidationStatus.FAIL)
+        self.assertTrue(result.can_plot)
+        self.assertGreater(result.centered_max_abs_mv, 10.0)
+
+    def test_source_array_unchanged_after_validation(self) -> None:
+        """Validation must not modify the source array."""
+        samples = make_valid_samples()
+        original = samples.copy()
+
+        self.validator.validate(samples, valid_metadata())
+
+        np.testing.assert_array_equal(samples, original)
+
+    def test_large_baseline_source_unchanged(self) -> None:
+        """Validation with large baseline must not modify source array."""
+        samples = np.zeros(EXPECTED_SHAPE, dtype=np.float32)
+        samples[:, 0] = np.float32(-1.0)
+        samples[:, 1] = np.float32(-10.0)
+        samples[:, 2] = samples[:, 1] - samples[:, 0]
+        original = samples.copy()
+
+        self.validator.validate(samples, valid_metadata())
+
+        np.testing.assert_array_equal(samples, original)
+
+    def test_new_fields_populated_for_valid_frame(self) -> None:
+        """New fields baseline_median_mv, centered_max_abs_mv, peak_to_peak_mv must be populated."""
+        samples = make_valid_samples()
+        result = self.validator.validate(samples, valid_metadata())
+
+        self.assertIsNotNone(result.baseline_median_mv)
+        self.assertEqual(len(result.baseline_median_mv), 3)
+        self.assertIsNotNone(result.centered_max_abs_mv)
+        self.assertIsInstance(result.centered_max_abs_mv, float)
+        self.assertIsNotNone(result.peak_to_peak_mv)
+        self.assertEqual(len(result.peak_to_peak_mv), 3)
+
+    def test_metadata_records_baseline_and_centered(self) -> None:
+        """ValidationResult for large baseline includes correct centered metrics."""
+        samples = np.zeros(EXPECTED_SHAPE, dtype=np.float32)
+        samples[:, 0] = np.float32(-2.0)
+        samples[:, 1] = np.float32(-10.0)
+        samples[:, 2] = samples[:, 1] - samples[:, 0]
+
+        result = self.validator.validate(samples, valid_metadata())
+
+        self.assertAlmostEqual(result.baseline_median_mv[0], -2.0, places=1)
+        self.assertAlmostEqual(result.baseline_median_mv[1], -10.0, places=1)
+        self.assertLess(result.centered_max_abs_mv, 0.1)
+        for ptp in result.peak_to_peak_mv:
+            self.assertLess(ptp, 0.1)
 
     def test_lead_iii_inconsistency_warns_but_does_not_block(self) -> None:
         samples = make_valid_samples()
@@ -222,6 +311,7 @@ class FrameValidatorTests(unittest.TestCase):
         self.assertFalse(result.can_plot)
         self.assertIsNone(result.samples)
         self.assertTrue(any("could not be read" in item for item in result.errors))
+
 
 
 if __name__ == "__main__":

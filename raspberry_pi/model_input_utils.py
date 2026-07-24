@@ -27,6 +27,7 @@ MODEL_INPUT_UNIT = "mV"
 MODEL_SAMPLE_RATE_HZ = 250
 MODEL_DURATION_SECONDS = 10.0
 DEFAULT_MAX_ABS_MV = 10.0
+DEFAULT_BASELINE_WARNING_MV = 5.0
 ALLOWED_NOOP_STEPS = {"identity", "none", "pass_through", "passthrough"}
 
 
@@ -49,6 +50,10 @@ class ValidationReport:
     dtype: str
     nan_inf_count: int
     max_abs_mV: float
+    baseline_median_mV: dict[str, float]
+    centered_max_abs_mV: float
+    peak_to_peak_mV: dict[str, float]
+    baseline_warning: bool
     lead_iii_max_error_mV: float
     lead_stats: dict[str, dict[str, float]]
 
@@ -165,6 +170,7 @@ def validate_model_samples(
     samples: np.ndarray,
     max_abs_mV: float,
     require_float32: bool = True,
+    baseline_warning_mV: float = DEFAULT_BASELINE_WARNING_MV,
 ) -> ValidationReport:
     failures: list[str] = []
     warnings: list[str] = []
@@ -184,13 +190,51 @@ def validate_model_samples(
 
     finite = samples[np.isfinite(samples)]
     max_abs = float(np.max(np.abs(finite))) if finite.size else float("nan")
-    if finite.size and np.isfinite(max_abs_mV):
-        if max_abs > max_abs_mV:
-            failures.append(f"maximum absolute mV {max_abs:.6g} exceeds {max_abs_mV:.6g}")
-        elif max_abs > 0.8 * max_abs_mV:
-            warnings.append(
-                f"maximum absolute mV {max_abs:.6g} is above 80% of sanity limit"
-            )
+
+    # Compute per-lead baseline and centered amplitude metrics
+    baseline_medians: dict[str, float] = {}
+    per_lead_centered_max: dict[str, float] = {}
+    per_lead_ptp: dict[str, float] = {}
+    baseline_warning = False
+
+    if (
+        finite.size
+        and not nan_inf_count
+        and samples.ndim == 2
+        and samples.shape == MODEL_INPUT_SHAPE
+    ):
+        for index, label in enumerate(("lead_i", "lead_ii", "lead_iii")):
+            lead = samples[:, index].astype(np.float64)
+            med = float(np.median(lead))
+            baseline_medians[label] = med
+            centered = lead - med
+            per_lead_centered_max[label] = float(np.max(np.abs(centered)))
+            per_lead_ptp[label] = float(np.max(lead) - np.min(lead))
+
+        centered_max_abs = max(per_lead_centered_max.values()) if per_lead_centered_max else 0.0
+
+        if np.isfinite(max_abs_mV):
+            # FAIL only when centered (dynamic) amplitude exceeds the limit
+            if centered_max_abs > max_abs_mV:
+                failures.append(
+                    f"centered maximum mV {centered_max_abs:.6g} exceeds {max_abs_mV:.6g}"
+                )
+            elif centered_max_abs > 0.8 * max_abs_mV:
+                warnings.append(
+                    f"centered maximum mV {centered_max_abs:.6g} is above 80% of sanity limit"
+                )
+
+        # Baseline warning: large DC offset
+        for label, med in baseline_medians.items():
+            if abs(med) > baseline_warning_mV:
+                baseline_warning = True
+                lead_name = label.replace("_", " ").title()
+                warnings.append(
+                    f"Large DC baseline on {lead_name}: {med:+.2f} mV. "
+                    f"Dynamic ECG amplitude remains within limit."
+                )
+    else:
+        centered_max_abs = float("nan")
 
     lead_iii_error = ch3_max_error(samples.astype(np.float32, copy=False))
     if lead_iii_error > CH3_CONSISTENCY_TOLERANCE_MV:
@@ -208,6 +252,10 @@ def validate_model_samples(
         dtype=str(samples.dtype),
         nan_inf_count=nan_inf_count,
         max_abs_mV=max_abs,
+        baseline_median_mV=baseline_medians,
+        centered_max_abs_mV=centered_max_abs,
+        peak_to_peak_mV=per_lead_ptp,
+        baseline_warning=baseline_warning,
         lead_iii_max_error_mV=lead_iii_error,
         lead_stats=lead_statistics(samples),
     )
@@ -254,6 +302,10 @@ def validation_dict(report: ValidationReport, max_abs_mV: float) -> dict[str, An
         "nan_inf_count": report.nan_inf_count,
         "max_abs_mV": report.max_abs_mV,
         "max_abs_limit_mV": float(max_abs_mV),
+        "baseline_median_mV": report.baseline_median_mV,
+        "centered_max_abs_mV": report.centered_max_abs_mV,
+        "peak_to_peak_mV": report.peak_to_peak_mV,
+        "baseline_warning": report.baseline_warning,
         "lead_iii_max_error_mV": report.lead_iii_max_error_mV,
     }
 

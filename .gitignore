@@ -1,6 +1,9 @@
 # PlatformIO build
 .pio/
 esp32_firmware/.pio/
+# PlatformIO build
+.pio/
+esp32_firmware/.pio/
 esp32_firmware/.vscode/
 
 # Python
@@ -8,6 +11,7 @@ __pycache__/
 *.pyc
 venv/
 venv_gui/
+venv_oled/
 .env
 
 # Data hasil pengujian

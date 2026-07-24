@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -117,6 +118,8 @@ class MainWindow(QMainWindow):
         self._estimated_bpm: float | None = None
         self._bpm_peak_count = 0
         self._bpm_reliable = False
+        self._ai_prediction: dict[str, Any] | None = None
+        self._ai_prediction_frame_id: int | None = None
 
         self._create_actions()
         self._create_control_panel()
@@ -240,27 +243,80 @@ class MainWindow(QMainWindow):
         self.plot_widget.replay_state_changed.connect(self._on_replay_state_changed)
         self.plot_widget.replay_finished.connect(self._on_replay_finished)
 
-        self.info_table = QTableWidget(0, 2, self)
-        self.info_table.setHorizontalHeaderLabels(("Property", "Value"))
-        self.info_table.verticalHeader().setVisible(False)
-        self.info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.info_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.info_table.setAlternatingRowColors(True)
-        self.info_table.setWordWrap(True)
-        self.info_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self.info_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
-        self.info_table.setMinimumWidth(300)
+        # QTabWidget for right-side details panel
+        self.info_tab_widget = QTabWidget(self)
+        self.info_tab_widget.setObjectName("infoTabWidget")
+        self.info_tab_widget.setMinimumWidth(260)
 
+        def create_info_table():
+            table = QTableWidget(0, 2, self)
+            table.setHorizontalHeaderLabels(("Property", "Value"))
+            table.verticalHeader().setVisible(False)
+            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+            table.setAlternatingRowColors(True)
+            table.setWordWrap(True)
+            table.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeMode.ResizeToContents
+            )
+            table.horizontalHeader().setSectionResizeMode(
+                1, QHeaderView.ResizeMode.Stretch
+            )
+            return table
+
+        # 1. Overview Tab
+        self.overview_table = create_info_table()
+        self.info_table = self.overview_table  # Alias for backward/test compatibility!
+        self.info_tab_widget.addTab(self.overview_table, "Overview")
+
+        # 2. Signal Tab
+        self.signal_table = create_info_table()
+        self.info_tab_widget.addTab(self.signal_table, "Signal")
+
+        # 3. Acquisition Tab
+        self.acquisition_table = create_info_table()
+        self.info_tab_widget.addTab(self.acquisition_table, "Acquisition")
+
+        # 4. AI Result Tab
+        self.ai_tab_widget = QWidget(self)
+        ai_layout = QVBoxLayout(self.ai_tab_widget)
+        ai_layout.setContentsMargins(6, 6, 6, 6)
+        ai_layout.setSpacing(6)
+
+        # AI Summary Card
+        self.ai_card_widget = QFrame(self.ai_tab_widget)
+        self.ai_card_widget.setObjectName("aiCard")
+        self.ai_card_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        card_layout = QVBoxLayout(self.ai_card_widget)
+        card_layout.setContentsMargins(8, 8, 8, 8)
+        card_layout.setSpacing(2)
+
+        self.ai_card_header = QLabel("AI RESULT", self.ai_card_widget)
+        self.ai_card_header.setStyleSheet("font-weight: 700; color: #555; font-size: 11px;")
+        self.ai_card_title = QLabel("WAITING", self.ai_card_widget)
+        self.ai_card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #333;")
+        self.ai_card_conf = QLabel("Confidence: —", self.ai_card_widget)
+        self.ai_card_latency = QLabel("Latency: —", self.ai_card_widget)
+
+        card_layout.addWidget(self.ai_card_header)
+        card_layout.addWidget(self.ai_card_title)
+        card_layout.addWidget(self.ai_card_conf)
+        card_layout.addWidget(self.ai_card_latency)
+        ai_layout.addWidget(self.ai_card_widget)
+
+        # Probabilities table
+        self.ai_prob_table = create_info_table()
+        ai_layout.addWidget(self.ai_prob_table)
+
+        self.info_tab_widget.addTab(self.ai_tab_widget, "AI Result")
+
+        # Splitter layout
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self.plot_widget)
-        splitter.addWidget(self.info_table)
+        splitter.addWidget(self.info_tab_widget)
         splitter.setStretchFactor(0, 5)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes((1050, 330))
+        splitter.setSizes((1050, 300))
         self._central_splitter = splitter
 
         # Create main container with control panel above splitter
@@ -504,8 +560,26 @@ class MainWindow(QMainWindow):
         self.display_calibration_btn.clicked.connect(self._show_display_calibration)
         row3.addWidget(self.display_calibration_btn)
 
+        separator5 = QFrame(self._control_panel)
+        separator5.setFrameShape(QFrame.Shape.VLine)
+        separator5.setFrameShadow(QFrame.Shadow.Sunken)
+        row3.addWidget(separator5)
+
+        self.details_button = QPushButton("Details", self._control_panel)
+        self.details_button.setCheckable(True)
+        self.details_button.setChecked(True)
+        self.details_button.setToolTip("Toggle details panel on the right")
+        self.details_button.toggled.connect(self._toggle_details_panel)
+        row3.addWidget(self.details_button)
+
         row3.addStretch()
         main_layout.addLayout(row3)
+
+    def _toggle_details_panel(self, checked: bool) -> None:
+        """Toggle visibility of the right details panel without destroying data."""
+        self.info_tab_widget.setVisible(checked)
+        self._settings.setValue("display/show_details", checked)
+        self.plot_widget._update_physical_geometry()
 
     def _connect_control_signals(self) -> None:
         """Connect control signals to plot_widget after it's created."""
@@ -549,10 +623,20 @@ class MainWindow(QMainWindow):
         )
         self.validation_badge = QLabel(" NO DATA ", bar)
         self.validation_badge.setObjectName("validationBadge")
+        self.ai_badge = QLabel(" AI — ", bar)
+        self.ai_badge.setObjectName("aiBadge")
+        self.ai_badge.setToolTip("AI prediction status for the current frame")
         self.live_status = QLabel("Follow Live: OFF", bar)
         bar.addWidget(self.status_summary, 1)
+        bar.addPermanentWidget(self.ai_badge)
         bar.addPermanentWidget(self.validation_badge)
         bar.addPermanentWidget(self.live_status)
+
+        # AI prediction polling timer
+        self._ai_poll_timer = QTimer(self)
+        self._ai_poll_timer.setInterval(500)
+        self._ai_poll_timer.timeout.connect(self._poll_ai_prediction)
+        self._ai_poll_timer.start()
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -599,18 +683,42 @@ class MainWindow(QMainWindow):
             QLabel#validationBadge { color: white; background: #616161;
                                      border-radius: 3px; font-weight: 700;
                                      padding: 2px 6px; }
+            QLabel#aiBadge { color: white; background: #616161;
+                             border-radius: 3px; font-weight: 700;
+                             padding: 2px 6px; }
             QLabel#bpmBadge { color: white; background: #616161;
                               border-radius: 3px; font-weight: 700;
                               padding: 2px 6px; }
             QStatusBar { color: #252124; background: #fff7f8;
                          border-top: 1px solid #d8b8bd; }
             QStatusBar QLabel { color: #252124; }
+            QTabWidget::pane { border: 1px solid #d8b8bd; background: #fffdfd; }
+            QTabBar::tab { background: #f6dde1; color: #2c2427; padding: 4px 8px; font-weight: 600; border: 1px solid #d8b8bd; }
+            QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
+            QFrame#aiCard { background: #f9f2f3; border: 1px solid #d8b8bd; border-radius: 4px; }
             """
         )
 
     def _restore_window_state(self) -> None:
         if not restore_window_geometry(self, self._settings):
-            self.resize(1440, 900)
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                geom = screen.availableGeometry()
+                w = min(1366, geom.width() - 20)
+                h = min(768, geom.height() - 40)
+                self.resize(max(1024, w), max(680, h))
+            else:
+                self.resize(1366, 768)
+
+        show_details = bool(self._settings.value("display/show_details", True, type=bool))
+        self.details_button.setChecked(show_details)
+        self.info_tab_widget.setVisible(show_details)
+
+        splitter_state = self._settings.value("window/splitter_state")
+        if splitter_state:
+            self._central_splitter.restoreState(splitter_state)
+        else:
+            self._central_splitter.setSizes((1050, 300))
 
     def _restore_control_settings(self) -> None:
         saved = load_viewer_settings(self._settings)
@@ -1045,6 +1153,11 @@ class MainWindow(QMainWindow):
         self._set_frame_combo_id(record.frame_id)
         self._update_bpm_display(result)
 
+        # Reset AI prediction state for the new frame
+        self._ai_prediction = None
+        self._ai_prediction_frame_id = record.frame_id
+        self._update_ai_badge()
+
         if result.can_plot:
             # Extract metadata for raw mode
             is_raw = self.data_mode_combo.currentText() == "Raw ADC"
@@ -1202,99 +1315,119 @@ class MainWindow(QMainWindow):
 
         is_raw = self.data_mode_combo.currentText() == "Raw ADC"
 
-        rows: list[tuple[str, Any]] = [
+        # -------------------------------------------------------------
+        # Tab 1: Overview
+        # -------------------------------------------------------------
+        quality = metadata.get("signal_quality", {})
+        if isinstance(quality, dict):
+            quality_text = quality.get("status", self._validation_status_text(result))
+        else:
+            quality_text = self._validation_status_text(result)
+
+        overview_rows: list[tuple[str, Any]] = [
             ("Frame ID", record.display_id),
             ("Filename", record.filename),
-            ("Created", created),
+            ("Data Mode", "Raw ADC" if is_raw else "Calibrated mV"),
             ("Sample rate", f"{sample_rate} Hz"),
-            ("Estimated BPM", self._bpm_information_text()),
-            ("R peaks detected", self._bpm_peak_count),
-            ("BPM source", "Lead II"),
             ("Duration", f"{duration} s"),
             (
                 "Samples",
                 result.source_shape[0]
                 if result.source_shape is not None and result.source_shape
-                else "Unavailable",
+                else "N/A",
             ),
             ("Channels", ", ".join(str(value) for value in channel_order)),
-            ("Shape", result.source_shape or "Unavailable"),
-            ("Dtype", result.source_dtype or "Unavailable"),
+            ("Shape", result.source_shape or "N/A"),
+            ("Dtype", result.source_dtype or "N/A"),
+            ("Unit", metadata.get("unit", "count" if is_raw else "mV")),
+            ("Validation", self._validation_status_text(result)),
+            ("Signal quality", quality_text),
+            ("Estimated BPM", self._bpm_information_text()),
+            ("R peaks detected", self._bpm_peak_count),
+            ("BPM source", "Lead II"),
+        ]
+        self._set_table_rows(self.overview_table, overview_rows)
+
+        # -------------------------------------------------------------
+        # Tab 2: Signal
+        # -------------------------------------------------------------
+        signal_rows: list[tuple[str, Any]] = [
+            ("Absolute max (ref only)", self._format_optional_value(result.max_abs_mv, is_raw)),
+            ("Centered max amplitude", self._format_optional_value(
+                getattr(result, "centered_max_abs_mv", None), is_raw)),
+            ("Lead III max error", self._format_optional_value(result.lead_iii_max_error_mv, is_raw)),
         ]
 
-        if is_raw:
-            # Raw mode information
-            rows.append(("Unit", metadata.get("unit", "ADC count (assumed)")))
-
-            # Add raw-specific metadata
-            adcmax = metadata.get("ADCMAX")
-            if adcmax is not None:
-                rows.append(("ADCMAX", f"{adcmax}"))
-
-            zero_code = metadata.get("zero_code")
-            if zero_code is not None:
-                rows.append(("zero_code", f"{zero_code}"))
-
-            protocol_version = metadata.get("protocol_version")
-            if protocol_version is not None:
-                rows.append(("Protocol version", f"{protocol_version}"))
-
-            native_sample_rate = metadata.get("native_sample_rate_hz")
-            if native_sample_rate is not None:
-                rows.append(("Native sample rate", f"{native_sample_rate} Hz"))
-
-            resampling_ratio = metadata.get("resampling_ratio")
-            if resampling_ratio is not None:
-                rows.append(("Resampling ratio", f"{resampling_ratio}"))
-
-            packet_loss = metadata.get("packet_loss")
-            if packet_loss is not None:
-                rows.append(("Packet loss", f"{packet_loss}"))
-
-            resampler_reset = metadata.get("resampler_reset_count")
-            if resampler_reset is not None:
-                rows.append(("Resampler resets", f"{resampler_reset}"))
-
-            # Current view mode
-            rows.append(("View mode", self.raw_view_combo.currentText()))
-
-        else:
-            # mV mode information
-            rows.append(("Unit", metadata.get("unit", "mV (canonical assumption)")))
-            rows.append(("Calibration method", calibration.get("method", "Unavailable")))
-            rows.append((
-                "Calibration scale",
-                calibration.get("scale_mV_per_count", "Unavailable"),
-            ))
-            rows.append(("Calibration status", calibration.get("status", "Unavailable")))
-
-        rows.extend([
-            ("Maximum absolute", self._format_optional_value(result.max_abs_mv, is_raw)),
-            (
-                "Lead III max error",
-                self._format_optional_value(result.lead_iii_max_error_mv, is_raw),
-            ),
-            ("Validation", self._validation_status_text(result)),
-        ])
+        # Per-lead baseline median, centered max, peak-to-peak
+        if not is_raw:
+            baseline_medians = getattr(result, "baseline_median_mv", None)
+            peak_to_peaks = getattr(result, "peak_to_peak_mv", None)
+            if baseline_medians and len(baseline_medians) == 3:
+                for lead_index, lead_label in enumerate(LEAD_LABELS):
+                    signal_rows.append(
+                        (f"{lead_label} baseline median",
+                         f"{baseline_medians[lead_index]:+.4f} mV")
+                    )
+            if peak_to_peaks and len(peak_to_peaks) == 3:
+                for lead_index, lead_label in enumerate(LEAD_LABELS):
+                    signal_rows.append(
+                        (f"{lead_label} peak-to-peak",
+                         f"{peak_to_peaks[lead_index]:.4f} mV")
+                    )
 
         stats = result.per_lead_stats or {}
         unit_str = "count" if is_raw else "mV"
         for lead_index, lead_label in enumerate(LEAD_LABELS):
             stat = self._lookup_lead_stats(stats, lead_index, lead_label)
             if stat:
-                rows.extend(
-                    (
-                        (f"{lead_label} minimum", f"{stat.get('min', stat.get('minimum', 0.0)):.9g} {unit_str}"),
-                        (f"{lead_label} maximum", f"{stat.get('max', stat.get('maximum', 0.0)):.9g} {unit_str}"),
-                        (f"{lead_label} mean", f"{stat.get('mean', 0.0):.9g} {unit_str}"),
-                        (f"{lead_label} std", f"{stat.get('std', stat.get('standard_deviation', 0.0)):.9g} {unit_str}"),
-                    )
-                )
+                signal_rows.extend([
+                    (f"{lead_label} minimum", f"{stat.get('min', stat.get('minimum', 0.0)):.9g} {unit_str}"),
+                    (f"{lead_label} maximum", f"{stat.get('max', stat.get('maximum', 0.0)):.9g} {unit_str}"),
+                    (f"{lead_label} mean", f"{stat.get('mean', 0.0):.9g} {unit_str}"),
+                    (f"{lead_label} std", f"{stat.get('std', stat.get('standard_deviation', 0.0)):.9g} {unit_str}"),
+                ])
+            else:
+                signal_rows.append((f"{lead_label} stats", "N/A"))
 
         reasons = list(result.errors) + list(result.warnings)
         if reasons:
-            rows.append(("Validation reasons", "\n".join(reasons)))
-        self._set_information_rows(rows)
+            signal_rows.append(("Validation notes", "\n".join(reasons)))
+        self._set_table_rows(self.signal_table, signal_rows)
+
+        # -------------------------------------------------------------
+        # Tab 3: Acquisition
+        # -------------------------------------------------------------
+        acq_rows: list[tuple[str, Any]] = [
+            ("Protocol version", metadata.get("protocol_version", "N/A")),
+            ("Native rate", f"{metadata.get('native_sample_rate_hz', 'N/A')} Hz" if metadata.get("native_sample_rate_hz") else "N/A"),
+            ("Output rate", f"{sample_rate} Hz"),
+            ("Packet loss", metadata.get("packet_loss", metadata.get("parser_stats", {}).get("packet_loss_count", "N/A"))),
+            ("CRC error", metadata.get("parser_stats", {}).get("crc_errors", "N/A")),
+            ("Resampler reset", metadata.get("resampler_reset_count", metadata.get("parser_stats", {}).get("resampler_reset_count", "N/A"))),
+            ("Zero code", metadata.get("zero_code", "N/A")),
+            ("ADCMAX", metadata.get("ADCMAX", "N/A")),
+            ("Calibration method", calibration.get("method", "N/A")),
+            ("Calibration scale", calibration.get("scale_mV_per_count", "N/A")),
+            ("Calibration status", calibration.get("status", "N/A")),
+        ]
+        self._set_table_rows(self.acquisition_table, acq_rows)
+
+        # -------------------------------------------------------------
+        # Tab 4: AI Result
+        # -------------------------------------------------------------
+        self._update_ai_result_tab()
+
+    def _set_table_rows(self, table: QTableWidget, rows: Iterable[tuple[str, Any]]) -> None:
+        materialized = list(rows)
+        table.setRowCount(len(materialized))
+        for row_index, (key, value) in enumerate(materialized):
+            table.setItem(row_index, 0, QTableWidgetItem(str(key)))
+            table.setItem(row_index, 1, QTableWidgetItem(str(value)))
+        table.resizeRowsToContents()
+
+    def _set_information_rows(self, rows: Iterable[tuple[str, Any]]) -> None:
+        """Alias kept for tests and fallback state."""
+        self._set_table_rows(self.overview_table, rows)
 
     def _format_optional_value(self, value: float | None, is_raw: bool) -> str:
         """Format optional value with appropriate unit."""
@@ -1344,25 +1477,27 @@ class MainWindow(QMainWindow):
         metadata = result.metadata or {}
         sample_rate = metadata.get("sample_rate_hz", 250)
         duration = metadata.get("duration_seconds", 10.0)
-        shape = result.source_shape or "Unavailable"
-        dtype = result.source_dtype or "Unavailable"
         is_raw = self.data_mode_combo.currentText() == "Raw ADC"
         unit = metadata.get("unit", "count" if is_raw else "mV")
-        quality = metadata.get("signal_quality", {})
-        if isinstance(quality, dict):
-            quality_text = quality.get("status", self._validation_status_text(result))
-        else:
-            quality_text = self._validation_status_text(result)
-        maximum_label = "max |count|" if is_raw else "max |mV|"
         bpm_text = self._bpm_status_text()
-        self.status_summary.setText(
-            f"Frame {record.frame_id} | {record.npy_path} | {sample_rate} Hz | "
-            f"{duration} s | shape {shape} | {dtype} | {unit} | "
-            f"{maximum_label} "
-            f"{('Unavailable' if result.max_abs_mv is None else format(result.max_abs_mv, '.6g'))} "
-            f"| BPM {bpm_text} | signal quality {quality_text}"
-        )
         status = self._validation_status_text(result)
+
+        ai_text = "WAITING"
+        if self._ai_prediction is not None:
+            pred = self._ai_prediction.get("prediction", "")
+            conf = self._ai_prediction.get("confidence_percent")
+            if pred and conf is not None:
+                ai_text = f"AI {pred} {conf:.1f}%"
+            elif pred:
+                ai_text = f"AI {pred}"
+
+        # Concise status summary
+        self.status_summary.setText(
+            f"Frame {record.display_id} | {sample_rate} Hz | {duration} s | {unit} | "
+            f"BPM {bpm_text} | {status} | {ai_text}"
+        )
+        self.status_summary.setToolTip(f"File: {record.npy_path}")
+
         self.validation_badge.setText(f" {status} ")
         self._set_validation_badge_color(status)
 
@@ -1457,6 +1592,163 @@ class MainWindow(QMainWindow):
             f"color: white; background: {colors.get(status, '#616161')}; "
             "border-radius: 3px; font-weight: 700; padding: 2px 6px;"
         )
+
+    # ------------------------------------------------------------------
+    # AI prediction integration (read-only, no ECGEngine import)
+    # ------------------------------------------------------------------
+
+    def _resolve_predictions_dir(self) -> Path | None:
+        """Locate the predictions directory relative to the data directory."""
+
+        data_dir = self._repository.data_dir
+        # Pattern A: predictions/ sibling of data_dir
+        candidate = data_dir.parent / "predictions"
+        if candidate.is_dir():
+            return candidate
+        # Pattern B: predictions/ inside data_dir parent's parent
+        candidate = data_dir.parent.parent / "predictions"
+        if candidate.is_dir():
+            return candidate
+        # Pattern A fallback: even if not yet created
+        return data_dir.parent / "predictions"
+
+    def _poll_ai_prediction(self) -> None:
+        """Timer callback: check for prediction JSON matching current frame."""
+
+        if self._current_record is None or self._ai_prediction_frame_id is None:
+            return
+
+        frame_id = self._ai_prediction_frame_id
+        predictions_dir = self._resolve_predictions_dir()
+        if predictions_dir is None:
+            return
+
+        prediction_file = predictions_dir / f"frame_{frame_id:06d}_prediction.json"
+        if not prediction_file.is_file():
+            return
+
+        try:
+            with prediction_file.open("r", encoding="utf-8") as handle:
+                data = __import__("json").load(handle)
+        except (ValueError, OSError):
+            return
+
+        if not isinstance(data, dict):
+            return
+
+        # Only accept predictions for the current frame
+        pred_frame_id = data.get("frame_id", "")
+        expected_id = f"{frame_id:06d}"
+        if pred_frame_id != expected_id:
+            return
+
+        if data.get("schema_version") != 1:
+            return
+
+        # Avoid redundant updates
+        if self._ai_prediction == data:
+            return
+
+        self._ai_prediction = data
+        self._update_ai_badge()
+
+        # Refresh the info table if we have a current record and validation
+        if self._current_record is not None and self._current_validation is not None:
+            self._update_information(self._current_record, self._current_validation)
+
+    def _update_ai_badge(self) -> None:
+        """Update the AI status badge in the status bar."""
+
+        if self._ai_prediction is None:
+            self.ai_badge.setText(" AI WAITING ")
+            self.ai_badge.setStyleSheet(
+                "color: white; background: #616161; border-radius: 3px; "
+                "font-weight: 700; padding: 2px 6px;"
+            )
+            self.ai_badge.setToolTip("Waiting for AI prediction")
+            return
+
+        status = self._ai_prediction.get("status", "")
+        prediction = self._ai_prediction.get("prediction", "")
+        confidence = self._ai_prediction.get("confidence_percent")
+
+        if status == "FAIL":
+            self.ai_badge.setText(" AI FAIL ")
+            self.ai_badge.setStyleSheet(
+                "color: white; background: #c62828; border-radius: 3px; "
+                "font-weight: 700; padding: 2px 6px;"
+            )
+            error_msg = self._ai_prediction.get("error", "Inference failed")
+            self.ai_badge.setToolTip(f"AI error: {error_msg}")
+        elif prediction == "Unclassified":
+            conf_text = f" {confidence:.1f}%" if confidence is not None else ""
+            self.ai_badge.setText(f" AI UNCLASS{conf_text} ")
+            self.ai_badge.setStyleSheet(
+                "color: white; background: #ef6c00; border-radius: 3px; "
+                "font-weight: 700; padding: 2px 6px;"
+            )
+            self.ai_badge.setToolTip(
+                "AI prediction below confidence threshold"
+            )
+        else:
+            conf_text = f" {confidence:.1f}%" if confidence is not None else ""
+            short_label = prediction[:8] if prediction else "?"
+            self.ai_badge.setText(f" AI {short_label}{conf_text} ")
+            self.ai_badge.setStyleSheet(
+                "color: white; background: #2e7d32; border-radius: 3px; "
+                "font-weight: 700; padding: 2px 6px;"
+            )
+            latency = self._ai_prediction.get("latency_ms")
+            tip = f"{prediction} ({confidence:.1f}%)"
+            if latency is not None:
+                tip += f" — {latency:.1f} ms"
+            self.ai_badge.setToolTip(tip)
+
+    def _update_ai_result_tab(self) -> None:
+        """Update the dedicated AI Result tab card and probabilities table."""
+
+        if self._ai_prediction is None:
+            self.ai_card_title.setText("WAITING")
+            self.ai_card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #666;")
+            self.ai_card_conf.setText("Confidence: —")
+            self.ai_card_latency.setText("Latency: —")
+            self._set_table_rows(self.ai_prob_table, [("AI Status", "WAITING")])
+            return
+
+        status = self._ai_prediction.get("status", "UNKNOWN")
+        prediction = self._ai_prediction.get("prediction", "N/A")
+        confidence = self._ai_prediction.get("confidence_percent")
+        latency = self._ai_prediction.get("latency_ms")
+        probabilities = self._ai_prediction.get("probabilities", {})
+
+        if status == "FAIL":
+            self.ai_card_title.setText("FAIL")
+            self.ai_card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #c62828;")
+            self.ai_card_conf.setText("Inference Error")
+            self.ai_card_latency.setText(f"Error: {self._ai_prediction.get('error', 'N/A')}")
+        elif prediction == "Unclassified":
+            self.ai_card_title.setText("UNCLASSIFIED")
+            self.ai_card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #ef6c00;")
+            self.ai_card_conf.setText(f"Confidence: {confidence:.1f}%" if confidence is not None else "Confidence: N/A")
+            self.ai_card_latency.setText(f"Latency: {latency:.1f} ms" if latency is not None else "Latency: N/A")
+        else:
+            self.ai_card_title.setText(str(prediction).upper())
+            self.ai_card_title.setStyleSheet("font-size: 15px; font-weight: 700; color: #2e7d32;")
+            self.ai_card_conf.setText(f"Confidence: {confidence:.1f}%" if confidence is not None else "Confidence: N/A")
+            self.ai_card_latency.setText(f"Latency: {latency:.1f} ms" if latency is not None else "Latency: N/A")
+
+        prob_rows: list[tuple[str, Any]] = []
+        if isinstance(probabilities, dict) and probabilities:
+            for label, prob in probabilities.items():
+                prob_rows.append((label, f"{prob:.1f}%"))
+        prob_rows.extend([
+            ("Status", status),
+            ("Threshold", self._ai_prediction.get("threshold", "N/A")),
+            ("Runtime", self._ai_prediction.get("runtime", "N/A")),
+        ])
+        if self._ai_prediction.get("warning"):
+            prob_rows.append(("Warning", self._ai_prediction.get("warning")))
+        self._set_table_rows(self.ai_prob_table, prob_rows)
 
     def _update_navigation_actions(self) -> None:
         current = self._current_record
@@ -1955,6 +2247,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
         self._save_settings()
+        self._settings.setValue("window/splitter_state", self._central_splitter.saveState())
+        self._settings.setValue("display/show_details", self.details_button.isChecked())
         self._watcher.stop()
         self.plot_widget.stop_replay()
         super().closeEvent(event)

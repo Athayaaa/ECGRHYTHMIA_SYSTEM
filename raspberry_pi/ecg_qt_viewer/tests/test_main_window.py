@@ -597,6 +597,28 @@ class MainWindowHeadlessTests(unittest.TestCase):
             window.plot_widget.plots[1].viewRange()[1][1], 15.8
         )
 
+    def test_large_baseline_shows_warning_status(self) -> None:
+        samples = _valid_samples(offset=-10.0) # Baseline -10 mV
+        _write_frame(self.directory, 1, samples=samples)
+        window = self._construct_window()
+        record = window._repository.get_by_id(1)
+
+        window._watcher.emit_ready(record)
+        self.app.processEvents()
+
+        self.assertEqual(
+            window._current_validation.status, ValidationStatus.WARNING
+        )
+        self.assertTrue(window._current_validation.can_plot)
+        self.assertEqual(window.validation_badge.text().strip(), "WARNING")
+        
+        # Verify signal info table has baseline information
+        table_text = ""
+        for i in range(window.signal_table.rowCount()):
+            table_text += window.signal_table.item(i, 0).text() + "\n"
+        self.assertIn("baseline median", table_text)
+        self.assertIn("Centered max amplitude", table_text)
+
     def test_current_npy_only_frame_reloads_when_json_arrives(self) -> None:
         path = _write_frame(self.directory, 1, metadata=False)
         window = self._construct_window()
@@ -726,6 +748,46 @@ class MainWindowHeadlessTests(unittest.TestCase):
             self.assertFalse(self.window.current_frame_is_valid)
         finally:
             unreadable.chmod(0o700)
+
+    def test_details_button_toggles_right_panel(self) -> None:
+        window = self._construct_window()
+        window.show()
+        self.app.processEvents()
+
+        self.assertTrue(window.details_button.isChecked())
+        self.assertTrue(window.info_tab_widget.isVisible())
+
+        # Toggle OFF
+        window.details_button.setChecked(False)
+        self.app.processEvents()
+        self.assertFalse(window.info_tab_widget.isVisible())
+
+        # Toggle ON
+        window.details_button.setChecked(True)
+        self.app.processEvents()
+        self.assertTrue(window.info_tab_widget.isVisible())
+
+    def test_info_tab_widget_tabs(self) -> None:
+        window = self._construct_window()
+        tab_names = [window.info_tab_widget.tabText(i) for i in range(window.info_tab_widget.count())]
+        self.assertEqual(tab_names, ["Overview", "Signal", "Acquisition", "AI Result"])
+
+    def test_equal_plot_heights_in_all_leads_mode(self) -> None:
+        window = self._construct_window()
+        window.plot_widget.set_lead_mode("All leads")
+        window.plot_widget._update_physical_geometry()
+        heights = [p.getViewBox().size().height() for p in window.plot_widget.plots]
+        self.assertEqual(heights[0], heights[1])
+        self.assertEqual(heights[1], heights[2])
+
+    def test_small_screen_layout_1366x768(self) -> None:
+        window = self._construct_window()
+        window.resize(1366, 768)
+        window.show()
+        self.app.processEvents()
+
+        self.assertLessEqual(window._control_panel.sizeHint().width(), 1366)
+        self.assertTrue(window.details_button.isVisible())
 
 
 if __name__ == "__main__":

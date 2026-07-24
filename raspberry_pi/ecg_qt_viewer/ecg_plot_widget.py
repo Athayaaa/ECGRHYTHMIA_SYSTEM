@@ -854,6 +854,15 @@ class ECGPlotWidget(QtWidgets.QWidget):
                 max(60.0, y_span * self._gain_mm_mv * pixels_per_mm_y)
             )
 
+        # Equalize heights for all 3 plots in All leads mode
+        if self._lead_mode == "All leads":
+            max_height = max(plot_heights)
+            plot_heights = [max_height, max_height, max_height]
+        elif self._lead_mode in LEAD_NAMES:
+            lead_idx = LEAD_NAMES.index(self._lead_mode)
+            single_height = max(plot_heights[lead_idx], 360.0)
+            plot_heights = [single_height] * 3
+
         for plot, height in zip(self.plots, plot_heights):
             view_box = plot.getViewBox()
             view_box.setMinimumWidth(plot_width)
@@ -869,10 +878,12 @@ class ECGPlotWidget(QtWidgets.QWidget):
         )
         canvas_width = int(math.ceil(plot_width + 105.0))
         canvas_height = int(
-            math.ceil(sum(visible_heights) + 54.0 * visible_count + 12.0)
+            math.ceil(sum(visible_heights) + 40.0 * visible_count + 12.0)
         )
         self.graphics_widget.setFixedSize(canvas_width, canvas_height)
         self.graphics_widget.updateGeometry()
+
+
 
     @property
     def recommended_canvas_size(self) -> QtCore.QSize:
