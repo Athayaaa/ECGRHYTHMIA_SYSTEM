@@ -44,6 +44,7 @@ FALLBACK_DATA_ROOT = "data"
 STALE_THRESHOLD_S = 15.0
 REFRESH_FLOOR_S = 0.5
 INPUT_POLL_S = 0.03
+DEFAULT_GREETING_SECONDS = 3.0
 DISK_FULL_PCT = 90.0
 TEMP_HIGH_C = 75.0
 FRAME_GLOB = "frame_*.json"
@@ -1208,6 +1209,15 @@ def render_main_lines(snap: StatusSnapshot) -> list[str]:
     ]
 
 
+def render_greeting_lines() -> list[str]:
+    return [
+        "ECGRHYTHMIA",
+        "Edge AI ECG",
+        "Starting...",
+        "Press: Menu",
+    ]
+
+
 def render_page_lines(snap: StatusSnapshot, page: int) -> list[str]:
     if page == 0:
         return render_main_lines(snap)
@@ -1385,6 +1395,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--driver", default="ssd1306")
     parser.add_argument("--refresh", type=float, default=0.5)
     parser.add_argument("--page-seconds", type=float, default=4.0)
+    parser.add_argument("--greeting-seconds", type=float, default=DEFAULT_GREETING_SECONDS)
     parser.add_argument("--menu-timeout", type=float, default=MENU_TIMEOUT_S)
     parser.add_argument("--console", action="store_true")
     parser.add_argument("--once", action="store_true")
@@ -1460,7 +1471,15 @@ def run(args) -> int:
                 prev = snap
                 next_snapshot_at = now_mono + refresh
 
-            if menu.mode == "status" and not snap.error_code:
+            show_greeting = (
+                menu.mode == "status"
+                and not snap.error_code
+                and args.greeting_seconds > 0
+                and now_mono - start < args.greeting_seconds
+            )
+            if show_greeting:
+                lines = render_greeting_lines()
+            elif menu.mode == "status" and not snap.error_code:
                 elapsed = now_mono - start
                 page = int(elapsed / max(0.5, args.page_seconds)) % 3
                 lines = render_page_lines(snap, page)
@@ -1646,6 +1665,7 @@ def _self_test() -> int:
         check("stop_keeps_session", any((root / "sessions").iterdir()))
 
     check("console_renders", "ECGRHYTHMIA" in render_console(render_main_lines(StatusSnapshot(state="READY"))))
+    check("greeting_renders", "Starting" in render_console(render_greeting_lines()))
     try:
         assert_safe_source()
         check("safe_source_guard", True)

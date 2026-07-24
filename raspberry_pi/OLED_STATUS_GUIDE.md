@@ -101,6 +101,13 @@ Jika panel SH1106:
 python3 oled_status.py --i2c-bus 1 --address 0x3C --driver sh1106
 ```
 
+Saat program baru menyala, OLED menampilkan greeting sekitar 3 detik. Durasi
+dapat diubah:
+
+```bash
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --greeting-seconds 5
+```
+
 ## Rotary Interaction
 
 | Input | Fungsi |
