@@ -43,6 +43,7 @@ DEFAULT_DATA_ROOT = "data/corrected_sessions"
 FALLBACK_DATA_ROOT = "data"
 STALE_THRESHOLD_S = 15.0
 REFRESH_FLOOR_S = 0.5
+INPUT_POLL_S = 0.03
 DISK_FULL_PCT = 90.0
 TEMP_HIGH_C = 75.0
 FRAME_GLOB = "frame_*.json"
@@ -1433,48 +1434,69 @@ def run(args) -> int:
             return 1
 
     prev: Optional[StatusSnapshot] = None
+    snap: Optional[StatusSnapshot] = None
     booted = False
     start = time.monotonic()
     last_settings = OledSettings(**settings.__dict__)
+    next_snapshot_at = 0.0
+    last_render_key = None
 
     try:
         while True:
+            event_seen = False
             while True:
                 try:
                     event = events.get_nowait()
                 except queue.Empty:
                     break
                 menu.handle(event)
+                event_seen = True
 
             menu.tick()
-            snap = build_snapshot(args, prev, booted)
-            booted = True
+            now_mono = time.monotonic()
+            if snap is None or now_mono >= next_snapshot_at:
+                snap = build_snapshot(args, prev, booted)
+                booted = True
+                prev = snap
+                next_snapshot_at = now_mono + refresh
 
             if menu.mode == "status" and not snap.error_code:
-                elapsed = time.monotonic() - start
+                elapsed = now_mono - start
                 page = int(elapsed / max(0.5, args.page_seconds)) % 3
                 lines = render_page_lines(snap, page)
             else:
                 lines = menu.render(snap)
 
+            render_key = (
+                tuple(lines),
+                menu.mode,
+                settings.brightness,
+                settings.invert,
+                settings.timeout_seconds,
+            )
+            should_render = event_seen or render_key != last_render_key
             if args.console:
-                sys.stdout.write("\n" + render_console(lines) + "\n")
-                sys.stdout.flush()
+                if should_render:
+                    sys.stdout.write("\n" + render_console(lines) + "\n")
+                    sys.stdout.flush()
             elif renderer is not None:
                 if settings != last_settings:
                     renderer.apply_settings(settings)
                     last_settings = OledSettings(**settings.__dict__)
-                idle_for = time.monotonic() - menu.last_input_at
+                    should_render = True
+                idle_for = now_mono - menu.last_input_at
                 if settings.timeout_seconds and idle_for > settings.timeout_seconds:
                     if not renderer.blank:
                         renderer.clear()
+                        should_render = False
                 else:
-                    renderer.render_lines(lines)
+                    if should_render or renderer.blank:
+                        renderer.render_lines(lines)
 
-            prev = snap
+            last_render_key = render_key
             if args.once:
                 return 0
-            time.sleep(refresh)
+            time.sleep(INPUT_POLL_S)
     except KeyboardInterrupt:
         return 0
     finally:
