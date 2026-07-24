@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "sent": {
+    "localhost|ecgrhythmia/device01|1744e145-2dac-46a3-ba25-4762735eb024|000005|json": {
+      "acked_at": "2026-07-24T14:47:14+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "e97bbcb097dea5fedb6fed7aa9ac2a6dfc1a9974ec5be3ccd0bba21914e96d83",
+      "frame_id": "000005",
+      "message_id": "device01-1744e145-2dac-46a3-ba25-4762735eb024-frame_000005",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "1744e145-2dac-46a3-ba25-4762735eb024",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|52257fce-71b7-4e37-815e-dd1da289a481|000009|json": {
+      "acked_at": "2026-07-24T14:47:15+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "efead555032e158aae35395e71c7485dbc470df496a85f438a6f75311db0fe23",
+      "frame_id": "000009",
+      "message_id": "device01-52257fce-71b7-4e37-815e-dd1da289a481-frame_000009",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "52257fce-71b7-4e37-815e-dd1da289a481",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|67b5f683-916e-4986-88c9-6a0a7df78d38|000003|json": {
+      "acked_at": "2026-07-24T14:47:13+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "8138f0516da25f3205e69d9fb47823fe39782f22aba1007bb5e68d511f675e78",
+      "frame_id": "000003",
+      "message_id": "device01-67b5f683-916e-4986-88c9-6a0a7df78d38-frame_000003",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "67b5f683-916e-4986-88c9-6a0a7df78d38",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|6ebb793f-5f73-4d30-861e-0efc5e5c29af|000010|json": {
+      "acked_at": "2026-07-24T14:47:16+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "852bd1b29156adc96e088f06bc298545be7df0bb038f27f0110b635215926edf",
+      "frame_id": "000010",
+      "message_id": "device01-6ebb793f-5f73-4d30-861e-0efc5e5c29af-frame_000010",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "6ebb793f-5f73-4d30-861e-0efc5e5c29af",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|6f075b3f-0c69-411c-8552-8bbacc06c3c0|000007|json": {
+      "acked_at": "2026-07-24T14:47:14+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "f6c9d5ece5410c0513332200a0cbcaadc2480213ad9c419ebe8b69b4616dcf6b",
+      "frame_id": "000007",
+      "message_id": "device01-6f075b3f-0c69-411c-8552-8bbacc06c3c0-frame_000007",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "6f075b3f-0c69-411c-8552-8bbacc06c3c0",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|73ee885b-796d-4689-bb27-cb6a5ae357cf|000004|json": {
+      "acked_at": "2026-07-24T14:47:13+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "454f4a6a3ccddac3c10c42ff2aaadd28ffced8680c194d51a50d217fcca386af",
+      "frame_id": "000004",
+      "message_id": "device01-73ee885b-796d-4689-bb27-cb6a5ae357cf-frame_000004",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "73ee885b-796d-4689-bb27-cb6a5ae357cf",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|820d89d2-57e6-41f9-b913-c6b13a3a3b3d|000001|json": {
+      "acked_at": "2026-07-24T14:47:12+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "d7aa3ba460998766efd6afd19fa2e383d57e5fabd526e9b9e548d1abe34b4eaf",
+      "frame_id": "000001",
+      "message_id": "device01-820d89d2-57e6-41f9-b913-c6b13a3a3b3d-frame_000001",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "820d89d2-57e6-41f9-b913-c6b13a3a3b3d",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|b4118c3a-f551-48e6-a4b7-7a0e1870e7b0|000006|json": {
+      "acked_at": "2026-07-24T14:47:14+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "782ac9c42e08d65df743639d4791d9e384ed7dc41ee43abbe6a4a18fcb0dcb1b",
+      "frame_id": "000006",
+      "message_id": "device01-b4118c3a-f551-48e6-a4b7-7a0e1870e7b0-frame_000006",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "b4118c3a-f551-48e6-a4b7-7a0e1870e7b0",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|b4708304-0ee6-4778-a8bf-2129b89812db|000002|json": {
+      "acked_at": "2026-07-24T14:47:12+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "275eaa016abf1dede43dd955c6b00030758c5564cc9d02f94d5c971f0346c0e6",
+      "frame_id": "000002",
+      "message_id": "device01-b4708304-0ee6-4778-a8bf-2129b89812db-frame_000002",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "b4708304-0ee6-4778-a8bf-2129b89812db",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    },
+    "localhost|ecgrhythmia/device01|ff50b470-3069-4143-a959-12fd36e7b302|000008|json": {
+      "acked_at": "2026-07-24T14:47:15+07:00",
+      "base_topic": "ecgrhythmia/device01",
+      "broker": "localhost",
+      "ecg_sha256": "ae58950a98f87b921bc850c34539fa2925b2fc1833e6f40ce66883b9142a0d3a",
+      "frame_id": "000008",
+      "message_id": "device01-ff50b470-3069-4143-a959-12fd36e7b302-frame_000008",
+      "payload_format": "json",
+      "port": 1883,
+      "qos": 1,
+      "session_id": "ff50b470-3069-4143-a959-12fd36e7b302",
+      "topic": "ecgrhythmia/device01",
+      "topics": [
+        "ecgrhythmia/device01/frame/json"
+      ]
+    }
+  },
+  "updated_at": "2026-07-24T14:47:16+07:00"
+}

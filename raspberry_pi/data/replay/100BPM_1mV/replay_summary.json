@@ -1,0 +1,270 @@
+{
+  "calibrated_dir": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated",
+  "failed_frames": 0,
+  "frame_results": [
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000001_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000001_mv.npy",
+      "error": null,
+      "frame_id": "frame_000001",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000001_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000001_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000001.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000002_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000002_mv.npy",
+      "error": null,
+      "frame_id": "frame_000002",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000002_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000002_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000002.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000003_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000003_mv.npy",
+      "error": null,
+      "frame_id": "frame_000003",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000003_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000003_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000003.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000004_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000004_mv.npy",
+      "error": null,
+      "frame_id": "frame_000004",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000004_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000004_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000004.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000005_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000005_mv.npy",
+      "error": null,
+      "frame_id": "frame_000005",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000005_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000005_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000005.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000006_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000006_mv.npy",
+      "error": null,
+      "frame_id": "frame_000006",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000006_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000006_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000006.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000007_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000007_mv.npy",
+      "error": null,
+      "frame_id": "frame_000007",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000007_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000007_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000007.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000008_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000008_mv.npy",
+      "error": null,
+      "frame_id": "frame_000008",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000008_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000008_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000008.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000009_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000009_mv.npy",
+      "error": null,
+      "frame_id": "frame_000009",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000009_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000009_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000009.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000010_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000010_mv.npy",
+      "error": null,
+      "frame_id": "frame_000010",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000010_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000010_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000010.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000011_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000011_mv.npy",
+      "error": null,
+      "frame_id": "frame_000011",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000011_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000011_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000011.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000012_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000012_mv.npy",
+      "error": null,
+      "frame_id": "frame_000012",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000012_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000012_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000012.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000013_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000013_mv.npy",
+      "error": null,
+      "frame_id": "frame_000013",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000013_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000013_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000013.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000014_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000014_mv.npy",
+      "error": null,
+      "frame_id": "frame_000014",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000014_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000014_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000014.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000015_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000015_mv.npy",
+      "error": null,
+      "frame_id": "frame_000015",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000015_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000015_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000015.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    },
+    {
+      "calibrated_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000016_mv.json",
+      "calibrated_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/calibrated/frame_000016_mv.npy",
+      "error": null,
+      "frame_id": "frame_000016",
+      "model_ready_json_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000016_input.json",
+      "model_ready_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready/frame_000016_input.npy",
+      "raw_npy_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV/frame_000016.npy",
+      "rejected_metadata_path": null,
+      "signal_quality": {
+        "reasons": [],
+        "status": "PASS"
+      },
+      "stage": "model_ready",
+      "status": "PASS"
+    }
+  ],
+  "frames_converted": 16,
+  "input_dir": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/data_kalibrasi/100BPM_1mV",
+  "model_ready_dir": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/model_ready",
+  "model_ready_frames": 16,
+  "output_dir": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV",
+  "rejected_dir": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/100BPM_1mV/rejected",
+  "rejected_frames": 0,
+  "total_raw_frames": 16
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "frame_id": "000001",
+  "source_file": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/model_ready_prosim_test/frame_000001_input.npy",
+  "source_sha256": "d7aa3ba460998766efd6afd19fa2e383d57e5fabd526e9b9e548d1abe34b4eaf",
+  "created_at": "2026-07-22T10:57:26.272021Z",
+  "sampling_rate_hz": 250.0,
+  "shape": [
+    2500,
+    3
+  ],
+  "dtype": "float32",
+  "unit": "mV",
+  "prediction": "Normal",
+  "confidence_percent": 98.75,
+  "probabilities": {
+    "Normal": 98.75,
+    "AF": 0.2,
+    "Takikardia": 0.06,
+    "Bradikardia": 0.78
+  },
+  "threshold": 0.5,
+  "latency_ms": 15.28,
+  "model_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/third_party/ecg-edge-ai-engine/models/model.tflite",
+  "model_sha256": "b5f0c19907658fdaeab740cdad2a0c713c3fd5f26de7782a26be9430e49e95b5",
+  "runtime": "ai-edge-litert",
+  "warning": null,
+  "error": null
+}

@@ -41,3 +41,7 @@ Thumbs.db
 
 # Jangan upload file sementara
 *.log
+
+# Keep Raspberry Pi sample/test data in the repository for Raspi setup.
+!raspberry_pi/data/
+!raspberry_pi/data/**

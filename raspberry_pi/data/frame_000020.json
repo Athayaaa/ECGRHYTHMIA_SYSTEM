@@ -1,0 +1,43 @@
+{
+  "bin_file": "frame_000020.bin",
+  "ch3_derived": true,
+  "channel_order": [
+    "Lead I",
+    "Lead II",
+    "Lead III"
+  ],
+  "created_at_utc": "2026-07-24T08:38:27.244095Z",
+  "csv_file": "frame_000020.csv",
+  "device_id": "esp32dev_dummy",
+  "dtype": "float32",
+  "duration_seconds": 10.0,
+  "frame_index": 20,
+  "lead_mapping": {
+    "ch1": "Lead I = LA - RA",
+    "ch2": "Lead II = LL - RA",
+    "ch3": "Lead III = Lead II - Lead I"
+  },
+  "measurement_id": "234696bc-e26e-4e21-8da3-ebdb0e1e0f43",
+  "npy_file": "frame_000020.npy",
+  "parser_stats": {
+    "bytes_discarded": 0,
+    "crc_errors": 0,
+    "header_errors": 0,
+    "last_sequence": 49999,
+    "out_of_order_count": 0,
+    "packet_loss_count": 0,
+    "packets_ok": 50000
+  },
+  "sample_count": 2500,
+  "sample_rate_hz": 250,
+  "sequence_end": 49999,
+  "sequence_start": 47500,
+  "sha256_checksum": "a818005d92f881c32db3e650901610eea787c1638a5c5c08daf54aa25e3e4e2e",
+  "shape": [
+    2500,
+    3
+  ],
+  "state": "stored",
+  "timestamp_us_end": 207808911,
+  "timestamp_us_start": 197812915
+}

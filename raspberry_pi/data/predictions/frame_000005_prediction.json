@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "frame_id": "000005",
+  "source_file": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/calibrated/frame_000005_mv.npy",
+  "source_sha256": "32ceb4f43066ffbafdea1d844074e5729a5b776e690904572b30b73f036a22eb",
+  "created_at": "2026-07-24T08:35:57.810691Z",
+  "sampling_rate_hz": 250.0,
+  "shape": [
+    2500,
+    3
+  ],
+  "dtype": "float32",
+  "unit": "mV",
+  "prediction": "Normal",
+  "confidence_percent": 99.43,
+  "probabilities": {
+    "Normal": 99.43,
+    "AF": 0.29,
+    "Takikardia": 0.07,
+    "Bradikardia": 0.65
+  },
+  "threshold": 0.5,
+  "latency_ms": 16.91,
+  "model_path": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/third_party/ecg-edge-ai-engine/models/model.tflite",
+  "model_sha256": "b5f0c19907658fdaeab740cdad2a0c713c3fd5f26de7782a26be9430e49e95b5",
+  "runtime": "ai-edge-litert",
+  "warning": "Large DC baseline on Lead I: -14.77 mV. Dynamic ECG amplitude remains within limit.; Large DC baseline on Lead II: -19.62 mV. Dynamic ECG amplitude remains within limit.",
+  "error": null,
+  "input_validation_status": "WARNING",
+  "input_warnings": [
+    "Large DC baseline on Lead I: -14.77 mV. Dynamic ECG amplitude remains within limit.",
+    "Large DC baseline on Lead II: -19.62 mV. Dynamic ECG amplitude remains within limit."
+  ]
+}

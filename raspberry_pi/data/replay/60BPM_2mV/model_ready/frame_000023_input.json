@@ -1,0 +1,60 @@
+{
+  "calibration_method": "multipoint_rpeak",
+  "calibration_scale_mV_per_count": 0.00011691351316834283,
+  "canonical_format": "npy",
+  "channel_count": 3,
+  "channel_order": [
+    "Lead I",
+    "Lead II",
+    "Lead III"
+  ],
+  "created_at": "2026-07-15T07:23:37.429871Z",
+  "dtype": "float32",
+  "duration_seconds": 10.0,
+  "frame_id": "frame_000023",
+  "lead_statistics": {
+    "lead_i": {
+      "max_mV": 1.4950900077819824,
+      "mean_mV": 0.05186540633440018,
+      "min_mV": -0.24095875024795532,
+      "std_mV": 0.2078578621149063
+    },
+    "lead_ii": {
+      "max_mV": 2.0911149978637695,
+      "mean_mV": 0.06095103919506073,
+      "min_mV": -0.6029229760169983,
+      "std_mV": 0.2919633090496063
+    },
+    "lead_iii": {
+      "max_mV": 0.6093533039093018,
+      "mean_mV": 0.009085630066692829,
+      "min_mV": -0.39084190130233765,
+      "std_mV": 0.09160270541906357
+    }
+  },
+  "memory_layout": "samples x channels",
+  "preprocessing_config": null,
+  "preprocessing_steps_applied": [],
+  "sample_rate_hz": 250,
+  "samples_per_channel": 2500,
+  "shape": [
+    2500,
+    3
+  ],
+  "signal_quality": {
+    "reasons": [],
+    "status": "PASS"
+  },
+  "source_file": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/60BPM_2mV/calibrated/frame_000023_mv.npy",
+  "source_metadata_file": "/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/data/replay/60BPM_2mV/calibrated/frame_000023_mv.json",
+  "unit": "mV",
+  "validation": {
+    "failures": [],
+    "lead_iii_max_error_mV": 0.0,
+    "max_abs_limit_mV": 10.0,
+    "max_abs_mV": 2.0911149978637695,
+    "nan_inf_count": 0,
+    "status": "PASS",
+    "warnings": []
+  }
+}
