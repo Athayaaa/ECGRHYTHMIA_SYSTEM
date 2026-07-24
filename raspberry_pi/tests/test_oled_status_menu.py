@@ -91,6 +91,22 @@ class RotaryTests(TestCase):
         self.assertEqual(rotary.button.kwargs["bounce_time"], 0.05)
         self.assertEqual(rotary.button.kwargs["hold_time"], 1.5)
 
+    def test_gpio_mapping_can_be_overridden(self):
+        events: queue.Queue[oled_status.InputEvent] = queue.Queue()
+        rotary = oled_status.RotaryInput(
+            events,
+            pin_a=13,
+            pin_b=20,
+            button_pin=26,
+            rotary_cls=FakeRotary,
+            button_cls=FakeButton,
+            clock=lambda: 1.0,
+        )
+
+        self.assertEqual(rotary.encoder.a, 13)
+        self.assertEqual(rotary.encoder.b, 20)
+        self.assertEqual(rotary.button.pin, 26)
+
     def test_rotation_debounce_and_direction(self):
         events: queue.Queue[oled_status.InputEvent] = queue.Queue()
         now = [1.0]

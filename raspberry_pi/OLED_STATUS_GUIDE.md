@@ -72,6 +72,13 @@ pip install luma.oled Pillow smbus2 psutil gpiozero
 Jika arah putar terbalik, jalankan dengan `--reverse-encoder` atau ubah setting
 melalui file `runtime/oled_settings.json`.
 
+Jika salah satu GPIO encoder bermasalah, pin dapat dioverride tanpa mengubah
+wiring default. Contoh memindahkan OUT B dari GPIO19 ke GPIO20:
+
+```bash
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --encoder-b-gpio 20
+```
+
 ## Console Test
 
 ```bash

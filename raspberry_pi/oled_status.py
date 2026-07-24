@@ -800,6 +800,9 @@ class RotaryInput:
         self,
         event_queue: "queue.Queue[InputEvent]",
         *,
+        pin_a: int = ENCODER_A_GPIO,
+        pin_b: int = ENCODER_B_GPIO,
+        button_pin: int = ENCODER_BUTTON_GPIO,
         reverse: bool = False,
         rotary_cls=None,
         button_cls=None,
@@ -817,14 +820,9 @@ class RotaryInput:
             rotary_cls = rotary_cls or RotaryEncoder
             button_cls = button_cls or Button
 
-        self.encoder = rotary_cls(
-            ENCODER_A_GPIO,
-            ENCODER_B_GPIO,
-            max_steps=0,
-            wrap=True,
-        )
+        self.encoder = rotary_cls(pin_a, pin_b, max_steps=0, wrap=True)
         self.button = button_cls(
-            ENCODER_BUTTON_GPIO,
+            button_pin,
             pull_up=True,
             bounce_time=ENCODER_BOUNCE_TIME_S,
             hold_time=ENCODER_HOLD_TIME_S,
@@ -1392,6 +1390,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--no-gpio", action="store_true")
     parser.add_argument("--reverse-encoder", action="store_true")
+    parser.add_argument("--encoder-a-gpio", type=int, default=ENCODER_A_GPIO)
+    parser.add_argument("--encoder-b-gpio", type=int, default=ENCODER_B_GPIO)
+    parser.add_argument("--encoder-button-gpio", type=int, default=ENCODER_BUTTON_GPIO)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -1412,7 +1413,13 @@ def run(args) -> int:
     rotary = None
     if not args.console and not args.no_gpio:
         try:
-            rotary = RotaryInput(events, reverse=settings.encoder_reverse)
+            rotary = RotaryInput(
+                events,
+                pin_a=args.encoder_a_gpio,
+                pin_b=args.encoder_b_gpio,
+                button_pin=args.encoder_button_gpio,
+                reverse=settings.encoder_reverse,
+            )
         except Exception as exc:
             LOG.error("Rotary init failed: %s", exc)
 
