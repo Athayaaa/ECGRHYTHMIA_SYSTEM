@@ -1,0 +1,19 @@
+[Unit]
+Description=ECGRHYTHMIA AI worker service
+Documentation=file:/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/DOCUMENTATION.md
+After=ecgrhythmia-receiver.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+EnvironmentFile=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/runtime/current_session.env
+ExecStart=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/venv_ai/bin/python /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/ai_worker.py --input-dir ${MODEL_READY_DIR} --output-dir ${PREDICTION_DIR} --follow --model-dir /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/third_party/ecg-edge-ai-engine/models
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=8
+KillSignal=SIGTERM
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

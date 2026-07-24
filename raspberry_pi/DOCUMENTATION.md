@@ -531,7 +531,10 @@ python -m ecg_qt_viewer.main --data-dir data/ --follow-live
 
 ## 10. OLED Status Display
 
-Display status sistem read-only pada layar OLED I2C 128×64 di Raspberry Pi.
+Display status sistem dan menu interaktif pada layar OLED I2C 128×64 di
+Raspberry Pi. Input menu memakai rotary encoder BCM GPIO13/GPIO19/GPIO26.
+OLED tidak membuka serial ECG; start/stop recording dilakukan lewat systemd
+user services.
 
 ### Apa yang Ditampilkan
 
@@ -540,6 +543,9 @@ Display status sistem read-only pada layar OLED I2C 128×64 di Raspberry Pi.
 - Suhu CPU Raspberry Pi
 - Penggunaan disk
 - Status kalibrasi
+- Status service AI dan MQTT (RUNNING / STOPPED)
+
+OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 
 ### Menjalankan
 
@@ -547,18 +553,20 @@ Display status sistem read-only pada layar OLED I2C 128×64 di Raspberry Pi.
 # Manual:
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv_oled/bin/activate
-python3 oled_status.py
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306
 
-# Sebagai systemd service:
-sudo cp ecgrhythmia-oled.service /etc/systemd/system/
-sudo systemctl enable ecgrhythmia-oled
-sudo systemctl start ecgrhythmia-oled
+# Sebagai systemd user service:
+mkdir -p ~/.config/systemd/user
+cp ecgrhythmia-*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ecgrhythmia-oled.service
 
 # Cek status service:
-sudo systemctl status ecgrhythmia-oled
+systemctl --user status ecgrhythmia-oled.service
 ```
 
-> **Catatan:** OLED status **sepenuhnya independen** dari receiver. Ia hanya membaca status dari file dan proses — tidak pernah membuka serial port.
+> **Catatan:** OLED status tetap independen dari transport ECG. Ia mengontrol
+> service receiver/AI/MQTT, tetapi tidak pernah membuka port serial sendiri.
 
 ---
 

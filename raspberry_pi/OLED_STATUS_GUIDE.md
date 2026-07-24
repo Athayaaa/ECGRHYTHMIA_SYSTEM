@@ -1,157 +1,306 @@
-# OLED I2C 128x64 Status Display
+# OLED I2C 128x64 Status Display + Rotary Menu
 
-Read-only status display for the ECGRHYTHMIA system on Raspberry Pi.
+OLED ECGRHYTHMIA menampilkan status sistem dan menyediakan menu interaktif
+melalui rotary encoder. Aplikasi OLED tidak membuka jalur transport ECG dan
+tidak membaca data prediksi AI; status AI hanya ditampilkan sebagai service
+`RUNNING` atau `STOPPED`.
 
-**Read-only guarantee:** `oled_status.py` only reads existing files and the
-process list. It never opens serial ports, never touches `/dev/tty*`, never
-imports or launches `receiver.py`, and never modifies firmware, the GUI, the
-AI engine, or any ECG data. If it fails or is killed, acquisition is
-unaffected.
+## Wiring
 
----
+### OLED SSD1306/SH1106 I2C
 
-## 1. Hardware wiring (SSD1306 128x64 I2C)
+| OLED pin | Raspberry Pi pin |
+|---|---|
+| VCC | 3.3V, physical pin 1 |
+| GND | GND, physical pin 6 |
+| SDA | GPIO2 / SDA1, physical pin 3 |
+| SCL | GPIO3 / SCL1, physical pin 5 |
 
-| OLED pin | Raspberry Pi pin        |
-|----------|-------------------------|
-| VCC      | 3.3V (pin 1)            |
-| GND      | GND (pin 6)             |
-| SDA      | GPIO2 / SDA (pin 3)     |
-| SCL      | GPIO3 / SCL (pin 5)     |
+Gunakan 3.3V, jangan 5V.
 
-Do **not** use 5V; the panel is 3.3V.
+### Rotary Encoder
 
-## 2. Enable I2C
+Penomoran GPIO memakai BCM.
+
+| Encoder pin | Raspberry Pi pin |
+|---|---|
+| OUT A | GPIO13, physical pin 33 |
+| OUT B | GPIO19, physical pin 35 |
+| SWITCH | GPIO26, physical pin 37 |
+| GND | physical pin 39 |
+
+Input encoder aktif-low dengan internal pull-up. Pin 34 dapat menjadi GND
+alternatif, tetapi tidak diperlukan. Pin 36/GPIO16, pin 38/GPIO20, dan
+pin 40/GPIO21 tidak digunakan.
+
+## Enable I2C
+
+Jika `raspi-config` tersedia:
 
 ```bash
-sudo raspi-config      # Interface Options -> I2C -> Enable
+sudo raspi-config
+# Interface Options -> I2C -> Enable
 sudo reboot
 ```
 
-Verify the bus and detect the panel address (usually `0x3C`, sometimes `0x3D`):
+Jika `raspi-config` tidak tersedia, tambahkan ini ke `/boot/firmware/config.txt`
+atau `/boot/config.txt`:
+
+```text
+dtparam=i2c_arm=on
+```
+
+Lalu reboot dan cek alamat OLED:
 
 ```bash
 sudo apt-get install -y i2c-tools
 i2cdetect -y 1
 ```
 
-## 3. Create the virtual environment (isolated from the receiver)
+Alamat umum adalah `0x3C`.
+
+## Environment OLED
 
 ```bash
 cd /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 python3 -m venv venv_oled
 source venv_oled/bin/activate
 pip install --upgrade pip
-pip install luma.oled Pillow smbus2 psutil
+pip install luma.oled Pillow smbus2 psutil gpiozero
 ```
 
-Keep these dependencies out of the receiver's requirements. `venv_oled/` is
-git-ignored.
+Jika arah putar terbalik, jalankan dengan `--reverse-encoder` atau ubah setting
+melalui file `runtime/oled_settings.json`.
 
-## 4. Console test (no hardware, works on a laptop)
+## Console Test
 
 ```bash
 python3 oled_status.py --console --once
-python3 oled_status.py --console --data-root data/corrected_sessions
-```
-
-`data/corrected_sessions` does not exist yet, so the app auto-falls back to
-`raspberry_pi/data/` and shows the real newest frame index, packet loss,
-`UNKNOWN` config, and `WAIT` AI status.
-
-Run the built-in tests:
-
-```bash
 python3 oled_status.py --self-test
 ```
 
-## 5. Run on the OLED
+Console mode tidak memakai OLED dan tidak memakai GPIO.
+
+## Run OLED
 
 ```bash
 source venv_oled/bin/activate
 python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306
 ```
 
-If your panel is at `0x3D`, pass `--address 0x3D`.
-
-## 6. Install as a systemd service (optional)
+Jika panel SH1106:
 
 ```bash
-sudo cp ecgrhythmia-oled.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now ecgrhythmia-oled.service
-journalctl -u ecgrhythmia-oled -f
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver sh1106
 ```
 
-The unit starts `After=multi-user.target`, runs as `athaya`, and only restarts
-on its own failure. It is not a receiver dependency.
+## Rotary Interaction
 
----
+| Input | Fungsi |
+|---|---|
+| Putar kanan | pilihan berikutnya |
+| Putar kiri | pilihan sebelumnya |
+| Tekan singkat | pilih / konfirmasi |
+| Tekan lama 1.5 detik | kembali |
+| Tekan singkat di halaman utama | buka menu |
 
-## Pages (auto-rotate ~4s, `--page-seconds`)
+Menu kembali otomatis ke halaman utama setelah timeout tidak aktif.
 
-### Page 1 — MAIN
+## Menu
+
+Menu utama:
+
+1. Recording
+2. Services
+3. Status
+4. Display
+5. System
+6. Back
+
+Submenu Recording:
+
+- Start New Session
+- Stop Recording
+- Session Info
+- Back
+
+Submenu Services:
+
+- Receiver Status
+- Restart Receiver
+- AI Worker Status
+- MQTT Status
+- Restart MQTT
+- Back
+
+Submenu Status:
+
+- Acquisition
+- Network
+- Raspberry Pi
+- Storage
+- Back
+
+Submenu Display:
+
+- Brightness: 25%, 50%, 75%, 100%
+- Screen Timeout: Off, 30 seconds, 60 seconds, 5 minutes
+- Invert Display
+- Back
+
+Submenu System:
+
+- Reboot
+- Shutdown
+- Back
+
+Reboot dan Shutdown membutuhkan konfirmasi `YES` lalu long press.
+
+## Session Runtime
+
+Start New Session membuat:
+
+```text
+raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/
+raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/calibrated/
+raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/model_ready/
+raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/predictions/
 ```
+
+File runtime ditulis atomic ke:
+
+```text
+raspberry_pi/runtime/current_session.env
+```
+
+Isi file:
+
+```text
+SESSION_ID=...
+SESSION_DIR=...
+CALIBRATED_DIR=...
+MODEL_READY_DIR=...
+PREDICTION_DIR=...
+```
+
+Password MQTT tidak disimpan di file ini. Jika MQTT butuh kredensial, buat file
+terpisah:
+
+```bash
+mkdir -p runtime
+nano runtime/mqtt_credentials.env
+chmod 600 runtime/mqtt_credentials.env
+```
+
+Contoh:
+
+```text
+MQTT_BROKER=example.s1.eu.hivemq.cloud
+MQTT_PORT=8883
+MQTT_USERNAME=ecgrhythmia
+MQTT_PASSWORD=isi_password_di_sini
+```
+
+## User Services
+
+OLED mengontrol service ini memakai `systemctl --user`:
+
+- `ecgrhythmia-receiver.service`
+- `ecgrhythmia-ai.service`
+- `ecgrhythmia-mqtt.service`
+- `ecgrhythmia-oled.service`
+
+Install sebagai user services:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ecgrhythmia-receiver.service ~/.config/systemd/user/
+cp ecgrhythmia-ai.service ~/.config/systemd/user/
+cp ecgrhythmia-mqtt.service ~/.config/systemd/user/
+cp ecgrhythmia-oled.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable ecgrhythmia-oled.service
+systemctl --user start ecgrhythmia-oled.service
+journalctl --user -u ecgrhythmia-oled -f
+```
+
+Service receiver, AI, dan MQTT tidak perlu di-enable; OLED akan start/stop
+sesuai menu Recording. Jika user service manager belum aktif saat boot:
+
+```bash
+loginctl enable-linger athaya
+```
+
+## Status Pages
+
+Halaman utama:
+
+```text
 ECGRHYTHMIA
-<STATE>     MM:SS      <- REC duration since receiver start
-FRAME         NNN      <- newest frame_*.json index
-SIGNAL   <val|N/A>     <- from metadata if present, else N/A (not computed)
-```
-State: `BOOTING`, `READY`, `WAITING`, `RECORDING`, `ERROR`.
-
-### Page 2 — ACQUISITION
-```
-ACQUISITION
-ADS1293   <OK|FAIL|UNKNOWN>   <- config_verified (no producer yet -> UNKNOWN)
-IN        <native|N/A>        <- native rate (no producer yet -> N/A)
-OUT       250 Hz              <- sample_rate_hz from frame metadata
-LOSS      <packet_loss_count> <- parser_stats
+READY
+Last: F0015
+Press: Menu
 ```
 
-### Page 3 — RASPBERRY PI
-```
-RASPBERRY PI
-TEMP      <NN C|N/A>
-DISK      <NN%>
-AI        <WAIT|OK|UNKNOWN>   <- OK only if AI engine process detected
-NET       <OK|-->             <- non-loopback interface up with IPv4
-```
+Saat recording:
 
-## Error codes (overlay)
-
-| Code | Meaning                                              |
-|------|------------------------------------------------------|
-| E01  | OLED/I2C init failed                                 |
-| E02  | ADS1293 config explicitly not verified (metadata)    |
-| E03  | Receiver running but no new frame within timeout     |
-| E04  | Packet loss / out-of-order increase                  |
-| E05  | CRC errors increasing                                |
-| E06  | Disk almost full (>90%)                              |
-| E07  | CPU temperature too high (>75 C)                     |
-
-E04/E05 are detected by comparing `parser_stats` against the previous cycle.
-
-## CLI
-
-```
-python3 oled_status.py \
-  --data-root data/corrected_sessions \  # falls back to data/ if absent
-  --session-dir <folder> \               # explicit override
-  --i2c-bus 1 --address 0x3C --driver ssd1306 \
-  --refresh 0.5 \                        # clamped to >= 0.5 (<= 2 reads/s)
-  --page-seconds 4 \
-  --console \                            # text render, no hardware
-  --once \                               # one cycle then exit
-  --self-test \                          # run inline tests
-  --log-level INFO
+```text
+ECGRHYTHMIA
+RECORDING
+00:02  F0015
+Press: Menu
 ```
 
-## v1 limitations
+Saat receiver aktif tetapi frame tidak baru:
 
-- Signal quality is **not** computed; only surfaced if metadata provides it.
-- Native input sampling rate has no producer yet -> `N/A`.
-- `config_verified` has no producer yet -> `ADS1293` shows `UNKNOWN` (hook in
-  place for when the pipeline emits it).
-- AI live status has no interface yet -> defaults to `WAIT` unless an AI
-  engine process is detected.
-- `data/corrected_sessions` does not exist yet; the app uses `data/`.
+```text
+ECGRHYTHMIA
+WAITING FRAME
+Receiver: ON
+Press: Menu
+```
+
+Error overlay:
+
+```text
+ECGRHYTHMIA
+ERROR E03
+NO NEW FRAME
+Press: Menu
+```
+
+## Error Codes
+
+| Code | Meaning |
+|---|---|
+| E01 | OLED/I2C init failed |
+| E02 | ADS1293 config explicitly failed in metadata |
+| E03 | Receiver running but no new frame within timeout |
+| E04 | Packet loss / out-of-order increased |
+| E05 | CRC errors increased |
+| E06 | Disk usage above 90% |
+| E07 | CPU temperature above 75 C |
+
+## Manual Hardware Validation
+
+1. Jalankan OLED.
+2. Putar encoder kanan dan kiri.
+3. Pastikan satu detent menghasilkan satu perpindahan.
+4. Tekan singkat untuk masuk menu.
+5. Tekan lama untuk kembali.
+6. Jalankan Start New Session.
+7. Periksa receiver, AI worker, dan MQTT aktif satu kali.
+8. Jalankan Stop Recording.
+9. Pastikan file session tetap tersimpan.
+10. Reboot Raspberry Pi dan uji OLED kembali.
+
+## Test Commands
+
+```bash
+cd /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+source venv_oled/bin/activate
+python3 -m py_compile oled_status.py
+python3 -m unittest discover -s tests -v
+git diff --check
+git status --short
+```
