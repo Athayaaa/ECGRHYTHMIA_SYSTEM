@@ -4,6 +4,7 @@ import json
 import queue
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from unittest import TestCase, mock
@@ -277,6 +278,38 @@ class MenuTests(TestCase):
 
 
 class SnapshotSafetyTests(TestCase):
+    def test_session_raw_adc_frames_update_snapshot(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw_adc = root / "raw_adc"
+            raw_adc.mkdir()
+            for frame_index in (1, 2):
+                (raw_adc / f"frame_{frame_index:06d}.json").write_text(
+                    json.dumps(
+                        {
+                            "frame_index": frame_index,
+                            "sample_rate_hz": 250,
+                            "parser_stats": {"crc_errors": 0},
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            class Args:
+                session_dir = str(root)
+                data_root = str(root)
+
+            with mock.patch.object(
+                oled_status,
+                "get_receiver_status",
+                return_value={"running": True, "start_time": time.time()},
+            ):
+                snap = oled_status.build_snapshot(Args(), None, True)
+
+            self.assertEqual(snap.frame_index, 2)
+            self.assertEqual(snap.frame_count, 2)
+            self.assertEqual(snap.state, "RECORDING")
+
     def test_build_snapshot_does_not_read_latest_prediction(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

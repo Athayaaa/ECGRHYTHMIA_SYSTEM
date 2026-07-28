@@ -469,7 +469,8 @@ def build_snapshot(args, prev: Optional[StatusSnapshot], booted: bool) -> Status
     now = time.time()
 
     root = find_data_root(args)
-    frame_meta = find_latest_frame_meta(root)
+    raw_root = root / "raw_adc" if (root / "raw_adc").is_dir() else root
+    frame_meta = find_latest_frame_meta(raw_root)
     cal_meta = find_latest_calibrated_meta(root)
     recv = get_receiver_status()
     env = read_key_value_env(CURRENT_SESSION_ENV)
@@ -519,7 +520,12 @@ def build_snapshot(args, prev: Optional[StatusSnapshot], booted: bool) -> Status
     snap.receiver = "ON" if recv["running"] else "OFF"
 
     if snap.session_dir is not None:
-        snap.frame_count = count_frame_files(snap.session_dir)
+        session_raw_root = (
+            snap.session_dir / "raw_adc"
+            if (snap.session_dir / "raw_adc").is_dir()
+            else snap.session_dir
+        )
+        snap.frame_count = count_frame_files(session_raw_root)
         snap.session_size_bytes = directory_size_bytes(snap.session_dir)
 
     if recv["running"] and recv["start_time"]:
