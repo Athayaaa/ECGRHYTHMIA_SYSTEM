@@ -175,11 +175,19 @@ Reboot dan Shutdown membutuhkan konfirmasi `YES` lalu long press.
 Start New Session membuat:
 
 ```text
-raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/
-raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/calibrated/
-raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/model_ready/
-raspberry_pi/data/sessions/session_YYYYMMDD_HHMMSS/predictions/
+raspberry_pi/data/sessions/session_DDMMYYYY_HHMMSS/
+├── raw_adc/
+├── calibrated/
+├── model_ready/
+├── predictions/
+├── logs/
+└── session.json
 ```
+
+Apabila dua sesi dibuat pada detik yang sama, sesi kedua memakai akhiran
+`_01`, lalu `_02`, tanpa menghapus atau menimpa sesi sebelumnya. `session.json`
+ditulis atomik dengan status `RECORDING` saat mulai; saat Stop Recording,
+status menjadi `STOPPED` dan memuat waktu selesai serta jumlah frame.
 
 File runtime ditulis atomic ke:
 
@@ -192,9 +200,11 @@ Isi file:
 ```text
 SESSION_ID=...
 SESSION_DIR=...
+RAW_ADC_DIR=...
 CALIBRATED_DIR=...
 MODEL_READY_DIR=...
 PREDICTION_DIR=...
+LOG_DIR=...
 ```
 
 Password MQTT tidak disimpan di file ini. Jika MQTT butuh kredensial, buat file

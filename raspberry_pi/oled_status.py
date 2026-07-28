@@ -25,6 +25,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+from session_manager import (
+    create_recording_session,
+    finish_recording_session,
+    paths_for_session,
+)
+
 try:
     import psutil
 except Exception:  # pragma: no cover - environment dependent
@@ -641,9 +647,9 @@ class SystemServiceManager:
         if result.returncode != 0:
             return ServiceResult(False, "ERROR", (result.stderr or "").strip())
         status = self.status(service)
-        if status != "RUNNING":
-            return ServiceResult(False, status, f"{service} {status}")
-        return ServiceResult(True, status, "OK")
+        if status in ("STOPPED", "INACTIVE", "N/A"):
+            return ServiceResult(True, status, "OK")
+        return ServiceResult(False, status, f"{service} {status}")
 
     def restart(self, service: str) -> ServiceResult:
         if not self.exists(service):
@@ -677,46 +683,37 @@ class SessionController:
         self.env_path = env_path
         self.now_func = now_func or datetime.now
 
-    def _unique_session_id(self) -> str:
-        base = self.now_func().strftime("session_%Y%m%d_%H%M%S")
-        candidate = base
-        counter = 2
-        while (self.session_root / candidate).exists():
-            candidate = f"{base}_{counter}"
-            counter += 1
-        return candidate
-
-    def _write_session_env(self, session_id: str, session_dir: Path) -> dict[str, Path]:
-        calibrated_dir = session_dir / "calibrated"
-        model_ready_dir = session_dir / "model_ready"
-        prediction_dir = session_dir / "predictions"
-        for path in (session_dir, calibrated_dir, model_ready_dir, prediction_dir):
-            path.mkdir(parents=True, exist_ok=True)
+    def _write_session_env(self, paths) -> dict[str, Path]:
         values = {
-            "SESSION_ID": session_id,
-            "SESSION_DIR": str(session_dir),
-            "CALIBRATED_DIR": str(calibrated_dir),
-            "MODEL_READY_DIR": str(model_ready_dir),
-            "PREDICTION_DIR": str(prediction_dir),
+            "SESSION_ID": paths.session_id,
+            "SESSION_DIR": str(paths.root),
+            "RAW_ADC_DIR": str(paths.raw_adc),
+            "CALIBRATED_DIR": str(paths.calibrated),
+            "MODEL_READY_DIR": str(paths.model_ready),
+            "PREDICTION_DIR": str(paths.predictions),
+            "LOG_DIR": str(paths.logs),
         }
         text = "".join(f"{key}={shell_quote_env(value)}\n" for key, value in values.items())
         write_text_atomic(self.env_path, text, mode=0o600)
         return {
-            "session": session_dir,
-            "calibrated": calibrated_dir,
-            "model_ready": model_ready_dir,
-            "prediction": prediction_dir,
+            "session": paths.root,
+            "raw_adc": paths.raw_adc,
+            "calibrated": paths.calibrated,
+            "model_ready": paths.model_ready,
+            "prediction": paths.predictions,
         }
 
     def start_new_session(self) -> ActionResult:
         if self.services.is_active(RECEIVER_SERVICE):
             return ActionResult(False, "SERVICE ERROR", ["Receiver already", "RUNNING"])
 
-        session_id = self._unique_session_id()
-        session_dir = self.session_root / session_id
-        self._write_session_env(session_id, session_dir)
+        try:
+            paths = create_recording_session(self.session_root, now=self.now_func())
+            self._write_session_env(paths)
+        except OSError as error:
+            return ActionResult(False, "SERVICE ERROR", ["SESSION ERROR", str(error)[:OLED_TEXT_CHARS]])
 
-        feedback = ["STARTING", session_id[-13:]]
+        feedback = ["STARTING", paths.session_id.removeprefix("session_")[-13:]]
         start_order = [
             ("RECEIVER", RECEIVER_SERVICE),
             ("AI", AI_SERVICE),
@@ -725,6 +722,10 @@ class SessionController:
         for label, service in start_order:
             result = self.services.start(service)
             if not result.ok:
+                try:
+                    finish_recording_session(paths, 0, status="FAILED")
+                except Exception as error:
+                    LOG.warning("Unable to mark failed session: %s", error)
                 feedback.append(f"{label} ERROR")
                 feedback.append(result.message[:OLED_TEXT_CHARS] or result.status)
                 return ActionResult(False, "SERVICE ERROR", feedback[-4:])
@@ -746,6 +747,16 @@ class SessionController:
                 feedback.append(result.message[:OLED_TEXT_CHARS] or result.status)
                 return ActionResult(False, "SERVICE ERROR", feedback[-4:])
             feedback.append(f"{label} OFF" if result.status != "N/A" else f"{label} N/A")
+        env = read_key_value_env(self.env_path)
+        session_dir = env.get("SESSION_DIR")
+        if session_dir:
+            try:
+                paths = paths_for_session(Path(session_dir), env.get("SESSION_ID"))
+                frame_count = len(list(paths.raw_adc.glob("frame_*.json")))
+                finish_recording_session(paths, frame_count)
+                feedback.append(f"F: {frame_count:04d}")
+            except Exception as error:
+                LOG.warning("Unable to finalize session metadata: %s", error)
         feedback.append("SESSION SAVED")
         feedback.append("READY")
         return ActionResult(True, "READY", feedback[-5:])

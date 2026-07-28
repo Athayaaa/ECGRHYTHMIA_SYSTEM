@@ -144,6 +144,30 @@ class MockMqttClient:
         return info
 
 
+class FakeMemory:
+    percent = 36.7
+    used = 812 * 1024 * 1024
+
+
+class FakePsutil:
+    def __init__(self, *, temperatures=None):
+        self.cpu_calls = []
+        self.temperatures = temperatures if temperatures is not None else {}
+
+    def cpu_percent(self, interval=None):
+        self.cpu_calls.append(interval)
+        return 41.2
+
+    def virtual_memory(self):
+        return FakeMemory()
+
+    def boot_time(self):
+        return 1000.0
+
+    def sensors_temperatures(self):
+        return self.temperatures
+
+
 class SequencedMockMqttClient(MockMqttClient):
     def __init__(self, rcs):
         super().__init__(rc=0)
@@ -256,6 +280,85 @@ class PayloadValidationTests(TestCase):
                 make_prediction()["probabilities"],
             )
             self.assertNotIn("/home/athaya", prepared.payload_bytes.decode("utf-8"))
+
+    def test_payload_includes_system_and_default_stress_test_fields(self):
+        fake_psutil = FakePsutil()
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            mqtt_publisher, "psutil", fake_psutil
+        ), mock.patch.object(mqtt_publisher.time, "time", return_value=20352.0):
+            root = Path(td)
+            thermal = root / "temp"
+            thermal.write_text("56900", encoding="utf-8")
+            ecg_dir, prediction_dir = write_pair(root, frame_id="001936")
+            telemetry = mqtt_publisher.SystemTelemetry(thermal_path=thermal)
+            prepared = mqtt_publisher.prepare_frame(
+                ecg_dir / "frame_001936_mv.npy",
+                prediction_dir / "frame_001936_prediction.json",
+                device_id="device01",
+                ecg_dir=ecg_dir,
+                telemetry=telemetry,
+            )
+
+            system = prepared.payload["system"]
+            self.assertEqual(system["cpu_usage_percent"], 41.2)
+            self.assertEqual(system["memory_usage_percent"], 36.7)
+            self.assertEqual(system["memory_usage_mb"], 812)
+            self.assertEqual(system["cpu_temperature_c"], 56.9)
+            self.assertEqual(system["uptime_s"], 19352)
+            self.assertTrue(0 <= system["cpu_usage_percent"] <= 100)
+            self.assertTrue(0 <= system["memory_usage_percent"] <= 100)
+            self.assertIsInstance(system["memory_usage_mb"], int)
+            self.assertIsInstance(system["uptime_s"], int)
+            self.assertEqual(prepared.payload["stress_test"], {"enabled": False, "frame_counter": 1936})
+            self.assertEqual(
+                prepared.payload["network"],
+                {
+                    "mqtt_publish_latency_ms": None,
+                    "wifi_rssi_dbm": None,
+                    "mqtt_connected": False,
+                },
+            )
+            self.assertNotIn("power", system)
+            self.assertNotIn("battery_voltage_v", system)
+            self.assertNotIn("battery_percent", system)
+            json.dumps(prepared.payload, separators=(",", ":"), allow_nan=False)
+
+    def test_session_id_from_calibrated_metadata_is_used_for_pairing(self):
+        with tempfile.TemporaryDirectory() as td:
+            metadata = make_metadata()
+            metadata["source_metadata"] = {"session_id": "session_28072026_153845"}
+            ecg_dir, prediction_dir = write_pair(Path(td), metadata=metadata)
+
+            prepared = mqtt_publisher.prepare_frame(
+                ecg_dir / "frame_000001_mv.npy",
+                prediction_dir / "frame_000001_prediction.json",
+                device_id="device01",
+                ecg_dir=ecg_dir,
+            )
+
+            self.assertEqual(prepared.session_id, "session_28072026_153845")
+            self.assertEqual(prepared.payload["session_id"], "session_28072026_153845")
+
+    def test_temperature_unavailable_is_null(self):
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            mqtt_publisher, "psutil", FakePsutil()
+        ):
+            telemetry = mqtt_publisher.SystemTelemetry(thermal_path=Path(td) / "missing")
+            system, _stress = telemetry.collect("not-numeric", stress_enabled=True)
+
+            self.assertIsNone(system["cpu_temperature_c"])
+            self.assertEqual(_stress, {"enabled": True, "frame_counter": 1})
+
+    def test_stress_test_cli_flag_is_preserved(self):
+        parser = mqtt_publisher.build_parser()
+        base_args = [
+            "--ecg-dir", "data/calibrated", "--prediction-dir", "data/predictions",
+            "--broker", "localhost", "--topic", "ecgrhythmia/device01", "--device-id", "device01",
+        ]
+        self.assertFalse(mqtt_publisher.resolve_config(parser.parse_args(base_args)).stress_test)
+        self.assertTrue(
+            mqtt_publisher.resolve_config(parser.parse_args([*base_args, "--stress-test"])).stress_test
+        )
 
     def test_warning_payload_is_allowed(self):
         with tempfile.TemporaryDirectory() as td:
@@ -393,6 +496,10 @@ class StateAndPublishTests(TestCase):
             decoded = json.loads(payload.decode("utf-8"))
             self.assertEqual(decoded["ecg"]["format"], "samples_by_time")
             self.assertEqual(decoded["frame_id"], "000001")
+            self.assertIn("system", decoded)
+            self.assertIn("stress_test", decoded)
+            self.assertEqual(decoded["network"]["mqtt_publish_latency_ms"], None)
+            self.assertTrue(decoded["network"]["mqtt_connected"])
 
     def test_npy_publish_sends_ecg_then_prediction(self):
         with tempfile.TemporaryDirectory() as td:
@@ -459,6 +566,105 @@ class StateAndPublishTests(TestCase):
                 ["Lead I", "Lead II", "Lead III"],
             )
             self.assertEqual(prediction_payload["prediction"]["label"], "Normal")
+            self.assertIn("system", prediction_payload)
+            self.assertIn("stress_test", prediction_payload)
+            self.assertIn("network", prediction_payload)
+
+    def test_telemetry_failure_does_not_stop_publish(self):
+        class BrokenPsutil:
+            def cpu_percent(self, interval=None):
+                raise RuntimeError("cpu unavailable")
+
+            def virtual_memory(self):
+                raise RuntimeError("memory unavailable")
+
+            def boot_time(self):
+                raise RuntimeError("uptime unavailable")
+
+            def sensors_temperatures(self):
+                raise RuntimeError("temperature unavailable")
+
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            mqtt_publisher, "psutil", BrokenPsutil()
+        ), mock.patch.object(mqtt_publisher, "THERMAL_ZONE_PATH", Path(td) / "missing"):
+            root = Path(td)
+            ecg_dir, prediction_dir = write_pair(root)
+            config = mqtt_publisher.PublisherConfig(
+                ecg_dir=ecg_dir,
+                prediction_dir=prediction_dir,
+                broker="localhost",
+                topic="ecgrhythmia/device01",
+                device_id="device01",
+                dry_run=False,
+                stable_delay=0,
+                state_path=prediction_dir / "mqtt_publish_state.json",
+            )
+            client = MockMqttClient()
+
+            stats = mqtt_publisher.run_publisher(config, client=client)
+
+            self.assertEqual(stats.sent, 1)
+            payload = json.loads(client.published[0][1].decode("utf-8"))
+            self.assertEqual(
+                payload["system"],
+                {
+                    "cpu_usage_percent": None,
+                    "memory_usage_percent": None,
+                    "memory_usage_mb": None,
+                    "cpu_temperature_c": None,
+                    "uptime_s": None,
+                },
+            )
+
+    def test_publisher_warms_up_cpu_usage_once(self):
+        fake_psutil = FakePsutil()
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            mqtt_publisher, "psutil", fake_psutil
+        ):
+            root = Path(td)
+            ecg_dir, prediction_dir = write_pair(root)
+            config = mqtt_publisher.PublisherConfig(
+                ecg_dir=ecg_dir,
+                prediction_dir=prediction_dir,
+                broker="localhost",
+                topic="ecgrhythmia/device01",
+                device_id="device01",
+                dry_run=True,
+                stable_delay=0,
+                state_path=prediction_dir / "mqtt_publish_state.json",
+            )
+
+            mqtt_publisher.run_publisher(config)
+
+            self.assertEqual(fake_psutil.cpu_calls, [None, None])
+
+    def test_wifi_rssi_reads_dbm_from_procfs(self):
+        with tempfile.TemporaryDirectory() as td:
+            wireless = Path(td) / "wireless"
+            wireless.write_text(
+                "Inter-| sta\n face |status\nwlan0: 0000   70.  -59.  -256\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(mqtt_publisher.wifi_rssi_dbm(wireless), -59)
+
+    def test_publish_latency_and_network_metrics(self):
+        config = mqtt_publisher.PublisherConfig(
+            ecg_dir=Path("."),
+            prediction_dir=Path("."),
+            broker="localhost",
+            topic="ecgrhythmia/device01",
+            device_id="device01",
+        )
+        connection = mqtt_publisher.MqttConnection(config, client=MockMqttClient())
+        with mock.patch.object(mqtt_publisher.time, "perf_counter", side_effect=[10.0, 10.0087]), mock.patch.object(
+            mqtt_publisher, "wifi_rssi_dbm", return_value=-59
+        ):
+            connection.publish("ecgrhythmia/device01/frame/json", b"{}", qos=1, retain=False)
+            network = mqtt_publisher.collect_network_metrics(connection)
+
+        self.assertEqual(network["mqtt_publish_latency_ms"], 8.7)
+        self.assertEqual(network["wifi_rssi_dbm"], -59)
+        self.assertTrue(network["mqtt_connected"])
 
     def test_npy_prediction_failure_does_not_mark_state_sent(self):
         with tempfile.TemporaryDirectory() as td:

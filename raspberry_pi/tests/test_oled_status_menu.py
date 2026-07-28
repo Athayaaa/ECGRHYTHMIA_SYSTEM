@@ -163,7 +163,10 @@ class SessionControllerTests(TestCase):
 
             self.assertTrue(result.ok)
             self.assertTrue((root / "runtime" / "current_session.env").is_file())
-            self.assertTrue((root / "sessions" / "session_20260724_103005").is_dir())
+            session_dir = root / "sessions" / "session_24072026_103005"
+            self.assertTrue((session_dir / "raw_adc").is_dir())
+            self.assertTrue((session_dir / "model_ready").is_dir())
+            self.assertIn("RAW_ADC_DIR", (root / "runtime" / "current_session.env").read_text())
             self.assertEqual(
                 services.calls,
                 [
@@ -212,6 +215,9 @@ class SessionControllerTests(TestCase):
                 ],
             )
             self.assertTrue(any((root / "sessions").iterdir()))
+            session_dir = next((root / "sessions").iterdir())
+            metadata = json.loads((session_dir / "session.json").read_text())
+            self.assertEqual(metadata["status"], "STOPPED")
 
     def test_service_failure_is_reported(self):
         with tempfile.TemporaryDirectory() as td:

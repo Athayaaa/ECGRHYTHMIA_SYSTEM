@@ -26,6 +26,14 @@ from ecg_buffer import ECGRingBuffer
 from metadata_store import MetadataStore
 from model_input_utils import DEFAULT_MAX_ABS_MV, prepare_model_input_file
 from packet_parser import HEADER_SIZE, PAYLOAD_SIZE, SYNC, VERSION, PacketParser
+from session_manager import (
+    SessionPaths,
+    clean_legacy_output,
+    create_recording_session,
+    finish_recording_session,
+    legacy_output_files,
+    paths_for_session,
+)
 from window_exporter import FrameExportPaths, WindowExporter
 
 
@@ -62,7 +70,7 @@ def load_config(path: Path) -> dict[str, Any]:
     return data
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ECGRHYTHMIA Phase 2 serial receiver")
     parser.add_argument(
         "--config",
@@ -73,6 +81,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", help="Serial device path override")
     parser.add_argument("--baudrate", type=int, help="Serial baudrate override")
     parser.add_argument("--output-dir", type=Path, help="Output directory override")
+    parser.add_argument(
+        "--new-session",
+        action="store_true",
+        help="Create a timestamped session and write all outputs below it",
+    )
+    parser.add_argument(
+        "--sessions-root",
+        type=Path,
+        default=Path("data/sessions"),
+        help="Root directory for --new-session (default: data/sessions)",
+    )
+    parser.add_argument(
+        "--session-dir",
+        type=Path,
+        help="Use an existing session directory created by the OLED service",
+    )
+    parser.add_argument(
+        "--clean-legacy-output",
+        action="store_true",
+        help="Remove only recognized legacy outputs outside data/sessions",
+    )
+    parser.add_argument(
+        "--dry-run-session",
+        action="store_true",
+        help="Create and validate a new session without opening serial",
+    )
     parser.add_argument(
         "--max-frames",
         type=int,
@@ -89,11 +123,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Python executable for the ECG viewer (default: venv_gui/bin/python)",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     config_path = args.config.resolve()
     config = load_config(config_path)
 
@@ -201,7 +235,51 @@ def main() -> int:
     frame_seconds = int(sampling_config.get("frame_seconds", 10))
     frame_size = sample_rate_hz * frame_seconds
 
-    if args.output_dir is not None:
+    session_paths: SessionPaths | None = None
+    sessions_root = args.sessions_root
+    if not sessions_root.is_absolute():
+        sessions_root = config_path.parent / sessions_root
+    sessions_root = sessions_root.resolve()
+
+    if args.clean_legacy_output:
+        legacy_root = sessions_root.parent
+        legacy_files = legacy_output_files(legacy_root)
+        print(f"Legacy output files to remove: {len(legacy_files)}")
+        removed = clean_legacy_output(legacy_root)
+        print(f"Legacy output files removed: {len(removed)}")
+        if not args.new_session and args.session_dir is None:
+            return 0
+
+    if args.new_session and args.session_dir is not None:
+        raise ValueError("--new-session and --session-dir cannot be used together")
+    if args.dry_run_session and not args.new_session:
+        raise ValueError("--dry-run-session requires --new-session")
+
+    if args.new_session:
+        try:
+            session_paths = create_recording_session(
+                sessions_root,
+                sample_rate_hz=float(sample_rate_hz),
+                duration_per_frame_s=float(frame_seconds),
+            )
+        except OSError as error:
+            print(f"error: unable to create recording session: {error}", file=sys.stderr)
+            return 1
+    elif args.session_dir is not None:
+        session_paths = paths_for_session(args.session_dir)
+        if not session_paths.metadata_path.is_file():
+            print(
+                f"error: session metadata not found: {session_paths.metadata_path}",
+                file=sys.stderr,
+            )
+            return 1
+
+    if session_paths is not None:
+        output_dir = session_paths.raw_adc
+        calibrated_output_dir = session_paths.calibrated
+        model_ready_enabled = True
+        model_ready_output_dir = session_paths.model_ready
+    elif args.output_dir is not None:
         output_dir = args.output_dir
     else:
         output_dir = Path(output_config.get("directory", "data"))
@@ -217,13 +295,14 @@ def main() -> int:
     )
     if not calibration_config_path.is_absolute():
         calibration_config_path = config_path.parent / calibration_config_path
-    calibrated_output_dir = Path(output_config.get("calibrated_directory", "calibrated"))
-    if not calibrated_output_dir.is_absolute():
-        calibrated_output_dir = output_dir / calibrated_output_dir
-    model_ready_enabled = bool(model_ready_config.get("enabled", False))
-    model_ready_output_dir = Path(model_ready_config.get("output_dir", "data/model_ready"))
-    if not model_ready_output_dir.is_absolute():
-        model_ready_output_dir = config_path.parent / model_ready_output_dir
+    if session_paths is None:
+        calibrated_output_dir = Path(output_config.get("calibrated_directory", "calibrated"))
+        if not calibrated_output_dir.is_absolute():
+            calibrated_output_dir = output_dir / calibrated_output_dir
+        model_ready_enabled = bool(model_ready_config.get("enabled", False))
+        model_ready_output_dir = Path(model_ready_config.get("output_dir", "data/model_ready"))
+        if not model_ready_output_dir.is_absolute():
+            model_ready_output_dir = config_path.parent / model_ready_output_dir
     model_ready_max_abs_mv = float(
         model_ready_config.get("max_abs_mv", DEFAULT_MAX_ABS_MV)
     )
@@ -245,10 +324,19 @@ def main() -> int:
     device_id = str(device_config.get("device_id", "esp32dev_dummy"))
     state = str(device_config.get("state", "stored"))
 
+    if session_paths is not None:
+        print("New recording session created")
+        print(f"Session ID : {session_paths.session_id}")
+        print(f"Output     : {session_paths.root}")
+        if args.dry_run_session:
+            finish_recording_session(session_paths, 0)
+            print("Dry run session: receiver not started")
+            return 0
+
     parser = PacketParser()
     ring_buffer = ECGRingBuffer(sample_rate_hz, frame_seconds)
-    exporter = WindowExporter(output_dir, raw_csv_name, sample_rate_hz, device_id, state)
-    metadata_store = MetadataStore(sqlite_db_path)
+    exporter: WindowExporter | None = None
+    metadata_store: MetadataStore | None = None
 
     frame_index = 0
     last_status_time = time.monotonic()
@@ -269,6 +357,10 @@ def main() -> int:
     signal.signal(signal.SIGTERM, handle_receiver_termination)
 
     try:
+        exporter = WindowExporter(
+            output_dir, raw_csv_name, sample_rate_hz, device_id, state
+        )
+        metadata_store = MetadataStore(sqlite_db_path)
         gui_process = (
             launch_ecg_viewer(output_dir, gui_python)
             if launch_gui
@@ -359,7 +451,14 @@ def main() -> int:
                                     frame_index=frame_index,
                                     frame=frame,
                                     samples=samples,
-                                    metadata={"parser_stats": parser.stats.as_dict()},
+                                    metadata={
+                                        "parser_stats": parser.stats.as_dict(),
+                                        **(
+                                            {"session_id": session_paths.session_id}
+                                            if session_paths is not None
+                                            else {}
+                                        ),
+                                    },
                                 )
                                 metadata_store.insert_frame(
                                     paths.metadata, paths.metadata_path.name
@@ -407,8 +506,15 @@ def main() -> int:
         return 0
     finally:
         stop_ecg_viewer(gui_process)
-        exporter.close()
-        metadata_store.close()
+        if exporter is not None:
+            exporter.close()
+        if metadata_store is not None:
+            metadata_store.close()
+        if session_paths is not None:
+            try:
+                finish_recording_session(session_paths, frame_index)
+            except Exception as error:
+                print(f"warning: unable to finalize session metadata: {error}", file=sys.stderr)
         signal.signal(signal.SIGTERM, previous_sigterm_handler)
 
 

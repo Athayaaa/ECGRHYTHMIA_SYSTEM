@@ -13,11 +13,39 @@ Pastikan **ESP32 sudah menyala dan terhubung ke Raspberry Pi melalui USB** sebel
 ```text
 ESP32
   -> receiver.py
-  -> data/calibrated/frame_000001_mv.npy
+  -> data/sessions/session_DDMMYYYY_HHMMSS/calibrated/frame_000001_mv.npy
   -> ai_worker.py
-  -> data/predictions/frame_000001_prediction.json
+  -> data/sessions/session_DDMMYYYY_HHMMSS/predictions/frame_000001_prediction.json
   -> mqtt_publisher.py
   -> HiveMQ Cloud / dashboard web
+```
+
+## Session Perekaman
+
+Untuk perekaman baru, gunakan folder sesi otomatis. Nama sesi memakai format
+`session_DDMMYYYY_HHMMSS`; apabila waktunya bertabrakan, sistem menambahkan
+akhiran `_01`, `_02`, dan seterusnya tanpa mengubah sesi yang sudah ada.
+
+```text
+data/sessions/session_DDMMYYYY_HHMMSS/
+├── raw_adc/
+├── calibrated/
+├── model_ready/
+├── predictions/
+├── logs/
+└── session.json
+```
+
+`session.json` memuat ID, waktu mulai/selesai, status, sampling rate, durasi
+frame, channel `Lead I`, `Lead II`, `Lead III`, unit `mV`, dan jumlah frame.
+File ini ditulis atomik saat sesi dibuat dan saat sesi dihentikan.
+
+Sebelum memakai perangkat, periksa pembuatan sesi tanpa membuka serial:
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+source venv/bin/activate
+python3 receiver.py --new-session --sessions-root data/sessions --dry-run-session
 ```
 
 Data yang dikirim ke MQTT adalah **full ECG mV per frame**:
@@ -47,15 +75,17 @@ frame_000001_prediction.json
 
 ---
 
-## Tahap 1: Membersihkan Sesi Sebelumnya (Clean Up)
-Sebelum Anda melakukan pengukuran baru, **sangat disarankan** untuk menghapus data lama agar hasil pengukuran dari sesi sebelumnya tidak tercampur dengan yang baru (seperti grafik lama atau prediksi yang tertinggal).
+## Tahap 1: Session Baru dan Output Legacy
+Sesi baru tidak perlu menghapus sesi sebelumnya: setiap perekaman memakai folder
+baru di `data/sessions/`. Bila masih ada output flat dari versi lama dan ingin
+membersihkannya, jalankan perintah berikut. Perintah ini tidak menyentuh folder
+`data/sessions/` atau dataset ProSim.
 
-Buka terminal dan jalankan *script* berikut:
 ```bash
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
-./clean_session.sh
+source venv/bin/activate
+python3 receiver.py --clean-legacy-output
 ```
-*Script ini akan dengan otomatis membersihkan semua data CSV, NPY, BIN, JSON, SQLite, dan sisa hasil prediksi AI dari sesi sebelumnya di dalam folder `data/`.*
 
 ---
 
@@ -126,6 +156,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format json \
+  --stress-test \
   --tls \
   --once \
   --dry-run
@@ -136,6 +167,9 @@ Output normal mode JSON:
 ```text
 Frame 000001 ready
 Format: JSON
+Frame 000001 telemetry: CPU 41.2%, RAM 36.7%, TEMP 56.9 C
+Frame 000001 network: MQTT disconnected, LAT N/A ms, RSSI -59 dBm
+Frame 000001 stress test: enabled
 Topic: ecgrhythmia/device01/frame/json
 ECG shape: (2500, 3)
 ECG dtype: float32
@@ -155,6 +189,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format npy \
+  --stress-test \
   --tls \
   --once \
   --dry-run
@@ -170,7 +205,7 @@ Prediction topic: ecgrhythmia/device01/prediction
 ECG shape: (2500, 3)
 ECG dtype: float32
 NPY size: 30128 bytes
-Prediction payload size: 616 bytes
+Prediction payload size: sekitar 800 bytes
 Prediction: Normal 98.75%
 Dry run: not connected to broker
 ```
@@ -226,9 +261,14 @@ Proses ini akan membaca data sensor dari ESP32, menyimpannya, dan secara otomati
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv/bin/activate
 
-# Jalankan receiver (ini otomatis meluncurkan GUI ECG Viewer)
-python3 receiver.py   --port /dev/ttyACM0   --baudrate 115200
+# Jalankan receiver dalam satu session baru (ini otomatis meluncurkan GUI ECG Viewer)
+python3 receiver.py --new-session --sessions-root data/sessions \
+  --port /dev/ttyACM0 --baudrate 115200
 ```
+
+Catat nilai `Output` yang dicetak receiver, lalu pakai path tersebut sebagai
+`SESSION_DIR` pada terminal AI dan MQTT di bawah. Contoh berikut memakai satu
+sesi bernama `session_DDMMYYYY_HHMMSS`.
 
 > **Tips:** Di aplikasi GUI yang terbuka, pastikan Anda menekan tombol **"Follow Live"** agar grafik terus bergeser mengikuti detak jantung yang paling baru.
 
@@ -240,7 +280,11 @@ cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv_ai/bin/activate
 
 # Jalankan AI worker dalam mode continuous (--follow)
-python3 ai_worker.py --input-dir data/calibrated --allow-calibrated-input --follow
+SESSION_DIR=data/sessions/session_DDMMYYYY_HHMMSS
+python3 ai_worker.py \
+  --input-dir "$SESSION_DIR/model_ready" \
+  --output-dir "$SESSION_DIR/predictions" \
+  --follow
 ```
 
 *(Begitu worker mendeteksi data baru, hasil prediksi deteksi aritmianya akan langsung muncul dan berkedip pada badge di kanan atas aplikasi GUI Anda).*
@@ -274,18 +318,21 @@ cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv_ai/bin/activate
 source ~/.config/ecgrhythmia/hivemq.env
 
+SESSION_DIR=data/sessions/session_DDMMYYYY_HHMMSS
+
 python3 mqtt_publisher.py \
-  --ecg-dir data/calibrated \
-  --prediction-dir data/predictions \
+  --ecg-dir "$SESSION_DIR/calibrated" \
+  --prediction-dir "$SESSION_DIR/predictions" \
   --broker 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud \
   --port 8883 \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format json \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \
-  --state-file data/predictions/mqtt_publish_state_hivemq.json \
+  --state-file "$SESSION_DIR/predictions/mqtt_publish_state_hivemq.json" \
   --tls \
   --follow
 ```
@@ -294,14 +341,17 @@ Log sukses:
 
 ```text
 MQTT publisher started
-Watching ECG: .../data/calibrated
-Watching predictions: .../data/predictions
+Watching ECG: .../data/sessions/session_DDMMYYYY_HHMMSS/calibrated
+Watching predictions: .../data/sessions/session_DDMMYYYY_HHMMSS/predictions
 Connecting to HiveMQ Cloud
 Broker: 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud:8883
 TLS: enabled
 Connected to broker
 Frame 000001 ready
 Format: JSON
+Frame 000001 telemetry: CPU 41.2%, RAM 36.7%, TEMP 56.9 C
+Frame 000001 network: MQTT connected, LAT N/A ms, RSSI -59 dBm
+Frame 000001 stress test: enabled
 Topic: ecgrhythmia/device01/frame/json
 Payload size: 164613 bytes
 Frame 000001 published, QoS 1
@@ -321,6 +371,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format npy \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \
@@ -350,11 +401,34 @@ membukanya di terminal keempat untuk melihat rangkuman status sistem secara
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv_oled/bin/activate
 
-# Jalankan skrip status OLED
-python3 oled_status.py
+# B default GPIO19; gunakan GPIO20 bila OUT B encoder dipindahkan ke pin 38.
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --encoder-b-gpio 20
 ```
 
-OLED tidak membaca atau menampilkan hasil AI dan tidak terhubung ke MQTT.
+OLED tidak membuka serial, tidak menjalankan AI, dan tidak membaca prediction
+JSON. OLED hanya menampilkan status service AI/MQTT dan dapat mengontrol service
+receiver, AI, serta MQTT dari rotary menu.
+
+### Mode Service OLED
+
+Untuk penggunaan mandiri tanpa empat terminal, install service user sekali saja:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ecgrhythmia-receiver.service ecgrhythmia-ai.service ecgrhythmia-mqtt.service ecgrhythmia-oled.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ecgrhythmia-oled.service
+sudo loginctl enable-linger "$USER"
+```
+
+Aktifkan hanya service OLED. Dari menu `Recording`, OLED membuat session baru
+`data/sessions/session_DDMMYYYY_HHMMSS/`, menulis
+`runtime/current_session.env`, lalu menjalankan receiver → AI → MQTT. Output
+receiver masuk ke `raw_adc/`, output mV ke `calibrated/`, input AI ke
+`model_ready/`, dan hasil AI/MQTT ke `predictions/`. Saat stop, OLED
+menghentikan MQTT → AI → receiver dan memfinalkan `session.json`; sesi lama
+tidak dihapus. Untuk wiring dan pengaturan service dengan GPIO20, lihat
+`OLED_STATUS_GUIDE.md`.
 
 ---
 
@@ -424,12 +498,34 @@ Payload berisi:
     "threshold": 0.5,
     "latency_ms": 12.0,
     "runtime": "ai-edge-litert"
+  },
+  "system": {
+    "cpu_usage_percent": 41.2,
+    "memory_usage_percent": 36.7,
+    "memory_usage_mb": 812,
+    "cpu_temperature_c": 56.9,
+    "uptime_s": 19352
+  },
+  "stress_test": {
+    "enabled": true,
+    "frame_counter": 1
+  },
+  "network": {
+    "mqtt_publish_latency_ms": 8.7,
+    "wifi_rssi_dbm": -59,
+    "mqtt_connected": true
   }
 }
 ```
 
 Pada payload aktual, `ecg.samples` berisi 2500 baris x 3 channel. Contoh di
 atas hanya menampilkan satu baris agar mudah dibaca.
+
+`system` dikoleksi satu kali per frame setelah pasangan ECG/prediction siap:
+CPU, RAM, uptime berasal dari `psutil`, sedangkan temperatur CPU diprioritaskan
+dari `/sys/class/thermal/thermal_zone0/temp`. `network.mqtt_publish_latency_ms`
+adalah latency publish yang telah mendapat ACK sebelumnya; pada frame pertama
+nilainya dapat `null`. RSSI juga `null` bila driver WiFi tidak memberi dBm.
 
 ### Format NPY
 
@@ -488,6 +584,22 @@ Struktur prediction mode NPY:
     "threshold": 0.5,
     "latency_ms": 12.0,
     "runtime": "ai-edge-litert"
+  },
+  "system": {
+    "cpu_usage_percent": 41.2,
+    "memory_usage_percent": 36.7,
+    "memory_usage_mb": 812,
+    "cpu_temperature_c": 56.9,
+    "uptime_s": 19352
+  },
+  "stress_test": {
+    "enabled": true,
+    "frame_counter": 1
+  },
+  "network": {
+    "mqtt_publish_latency_ms": 8.7,
+    "wifi_rssi_dbm": -59,
+    "mqtt_connected": true
   }
 }
 ```
@@ -495,6 +607,8 @@ Struktur prediction mode NPY:
 Dashboard harus memasangkan ECG NPY dan prediction JSON berdasarkan
 `message_id` dan `frame_id`. Jika ECG NPY sudah diterima tetapi prediction retry,
 dashboard tetap melakukan deduplikasi berdasarkan `message_id`.
+Binary ECG NPY tidak mengandung telemetry dan tidak pernah dimodifikasi;
+`system`, `stress_test`, dan `network` berada pada JSON companion ini.
 
 ---
 
@@ -516,6 +630,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format json \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \
@@ -535,6 +650,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format npy \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \

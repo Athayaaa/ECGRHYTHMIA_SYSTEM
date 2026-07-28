@@ -175,7 +175,7 @@ cd ~/Projects/ECGRHYTHMIA_SYSTEM
 
 ### Setup Python Environment di Raspberry Pi
 
-Proyek ini menggunakan **3 virtual environment terpisah** untuk masing-masing kebutuhan:
+Proyek ini menggunakan environment terpisah untuk receiver, GUI, AI, dan OLED:
 
 ```bash
 cd raspberry_pi
@@ -194,6 +194,14 @@ pip install -r ecg_qt_viewer/requirements.txt
 python3 -m venv venv_ai
 source venv_ai/bin/activate
 pip install -r ../third_party/ecg-edge-ai-engine/requirements.txt
+
+# MQTT publisher menggunakan numpy, paho-mqtt, dan psutil dari requirements project.
+pip install -r requirements.txt
+
+# 4. venv_oled (OLED I2C + rotary encoder)
+python3 -m venv venv_oled
+source venv_oled/bin/activate
+pip install luma.oled Pillow smbus2 psutil gpiozero lgpio
 ```
 
 ---
@@ -284,17 +292,52 @@ ads debug off  →  ads stop  →  ads start  →  ads stream start
 
 ## 7. Raspberry Pi — Receiver & Pipeline
 
-### Memulai Sesi Pengukuran Baru (Clean Up)
+### Memulai Sesi Pengukuran Baru
 
-Sebelum Anda melakukan pengukuran baru, sangat disarankan untuk menghapus data lama agar hasil pengukuran dari sesi sebelumnya tidak tercampur dengan yang baru (seperti file `frame_*.npy`, hasil deteksi AI lama, dan file database metadatanya).
-
-Jalankan script bash berikut yang sudah disediakan di folder `raspberry_pi`:
+Gunakan session otomatis untuk setiap perekaman baru. Setiap sesi mendapat
+folder sendiri sehingga hasil sesi lama tidak tercampur atau terhapus.
 
 ```bash
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
-./clean_session.sh
+source venv/bin/activate
+
+# Validasi pembuatan folder dan session.json tanpa membuka serial.
+python3 receiver.py --new-session --sessions-root data/sessions --dry-run-session
+
+# Mulai perekaman dari ESP32. Hentikan dengan Ctrl+C.
+python3 receiver.py --new-session --sessions-root data/sessions \
+  --port /dev/ttyACM0 --baudrate 115200
 ```
-*Script ini akan dengan aman menghapus semua data `csv`, `npy`, `bin`, `json`, serta hasil prediksi model lama yang ada di dalam direktori `data/`.*
+
+Format nama sesi adalah `session_DDMMYYYY_HHMMSS`, misalnya
+`session_28072026_153845`. Apabila dua sesi dimulai pada detik yang sama,
+sesi kedua memakai akhiran `_01`, `_02`, dan seterusnya.
+
+```text
+data/sessions/session_DDMMYYYY_HHMMSS/
+├── raw_adc/       # CSV, BIN, NPY, JSON raw ADC, dan SQLite metadata
+├── calibrated/    # frame ECG dalam mV
+├── model_ready/   # input float32 shape (2500, 3) untuk AI
+├── predictions/   # JSON hasil inferensi AI dan state MQTT
+├── logs/          # ruang untuk log sesi
+└── session.json   # metadata lifecycle sesi
+```
+
+`session.json` ditulis secara atomic. Saat mulai, statusnya `RECORDING`;
+saat receiver berhenti normal atau melalui `SIGTERM`, status menjadi `STOPPED`
+dan mencatat `ended_at` serta `frame_count`. Metadata juga menyimpan sampling
+rate, durasi frame, urutan channel `Lead I`, `Lead II`, `Lead III`, dan unit
+`mV`.
+
+Output lama di luar `data/sessions/` dapat dibersihkan secara terbatas dengan:
+
+```bash
+python3 receiver.py --clean-legacy-output
+```
+
+Pembersihan ini hanya menghapus file output legacy yang dikenal (`frame_*`,
+`raw_ecg.csv`, SQLite metadata, dan prediction legacy). Folder
+`data/sessions/` serta dataset seperti `*_prosim_test` tidak disentuh.
 
 ### Menjalankan Receiver
 
@@ -317,6 +360,9 @@ python3 receiver.py --max-frames 10
 # Custom output directory:
 python3 receiver.py --output-dir data/my_session
 
+# Pakai folder sesi yang sudah dibuat oleh menu OLED:
+python3 receiver.py --session-dir data/sessions/session_DDMMYYYY_HHMMSS --no-gui
+
 # Lihat semua opsi:
 python3 receiver.py --help
 ```
@@ -329,6 +375,11 @@ python3 receiver.py --help
 | `--port` | dari config | Serial device path override |
 | `--baudrate` | dari config | Baudrate override |
 | `--output-dir` | `data/` | Direktori output frame |
+| `--new-session` | *(flag)* | Buat folder sesi baru dan arahkan seluruh output pipeline ke sana |
+| `--sessions-root` | `data/sessions` | Root untuk folder yang dibuat oleh `--new-session` |
+| `--session-dir` | - | Gunakan sesi yang sudah ada, misalnya sesi yang dibuat OLED |
+| `--dry-run-session` | *(flag)* | Uji pembuatan sesi tanpa membuka serial; membutuhkan `--new-session` |
+| `--clean-legacy-output` | *(flag)* | Bersihkan hanya output legacy di luar `data/sessions/` |
 | `--max-frames` | `0` (tak terbatas) | Berhenti setelah N frame |
 | `--no-gui` | *(flag)* | Jalankan tanpa membuka ECG Viewer |
 
@@ -536,6 +587,11 @@ Raspberry Pi. Input menu memakai rotary encoder BCM GPIO13/GPIO19/GPIO26.
 OLED tidak membuka serial ECG; start/stop recording dilakukan lewat systemd
 user services.
 
+Wiring OLED: VCC ke 3.3V physical pin 1, GND ke pin 6, SDA ke GPIO2/pin 3,
+dan SCL ke GPIO3/pin 5. Wiring rotary default: A GPIO13/pin 33, B GPIO19/pin
+35, switch GPIO26/pin 37, dan GND pin 39. Bila OUT B dipindahkan karena GPIO19
+bermasalah, gunakan GPIO20/pin 38 dengan `--encoder-b-gpio 20`.
+
 ### Apa yang Ditampilkan
 
 - Status receiver (running / stopped)
@@ -545,6 +601,14 @@ user services.
 - Status kalibrasi
 - Status service AI dan MQTT (RUNNING / STOPPED)
 
+Menu Recording membuat session runtime baru di
+`data/sessions/session_DDMMYYYY_HHMMSS/`, lengkap dengan `raw_adc/`,
+`calibrated/`, `model_ready/`, `predictions/`, `logs/`, dan `session.json`.
+OLED menulis `runtime/current_session.env` secara atomic, lalu memulai service
+dalam urutan receiver → AI → MQTT. Saat Stop Recording, urutannya dibalik:
+MQTT → AI → receiver; metadata sesi difinalkan menjadi `STOPPED`. Session dan
+data frame tidak dihapus oleh OLED.
+
 OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 
 ### Menjalankan
@@ -553,13 +617,14 @@ OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 # Manual:
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 source venv_oled/bin/activate
-python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306
+python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --encoder-b-gpio 20
 
 # Sebagai systemd user service:
 mkdir -p ~/.config/systemd/user
 cp ecgrhythmia-*.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now ecgrhythmia-oled.service
+sudo loginctl enable-linger "$USER"
 
 # Cek status service:
 systemctl --user status ecgrhythmia-oled.service
@@ -567,6 +632,9 @@ systemctl --user status ecgrhythmia-oled.service
 
 > **Catatan:** OLED status tetap independen dari transport ECG. Ia mengontrol
 > service receiver/AI/MQTT, tetapi tidak pernah membuka port serial sendiri.
+> Service receiver, AI, dan MQTT tidak perlu di-enable otomatis; menu OLED yang
+> mengelolanya. Lihat `OLED_STATUS_GUIDE.md` untuk wiring, I2C, semua menu, dan
+> troubleshooting rotary secara lengkap.
 
 ---
 
@@ -726,16 +794,24 @@ Publisher selalu memasangkan frame berdasarkan `frame_id`:
 
 ### Topic MQTT
 
-Topic utama dashboard:
+Base topic dashboard:
 
 ```text
-ecgrhythmia/device01/frame
+ecgrhythmia/device01
+```
+
+Publisher membentuk topic output berikut:
+
+```text
+ecgrhythmia/device01/frame/json       # mode JSON
+ecgrhythmia/device01/frame/npy        # ECG binary mode NPY
+ecgrhythmia/device01/prediction       # JSON companion mode NPY
 ```
 
 Untuk HiveMQ Web Client, subscribe dengan salah satu:
 
 ```text
-ecgrhythmia/device01/frame
+ecgrhythmia/device01/#
 ```
 
 atau wildcard project:
@@ -768,6 +844,8 @@ python3 mqtt_publisher.py \
   --port 8883 \
   --topic ecgrhythmia/device01/frame \
   --device-id device01 \
+  --payload-format json \
+  --stress-test \
   --tls \
   --once \
   --dry-run
@@ -777,9 +855,13 @@ Output normal:
 
 ```text
 Frame 000001 ready
+Format: JSON
+Frame 000001 telemetry: CPU 41.2%, RAM 36.7%, TEMP 56.9 C
+Frame 000001 network: MQTT disconnected, LAT N/A ms, RSSI -59 dBm
+Frame 000001 stress test: enabled
 Prediction: Normal 98.75%
 Payload size: 164613 bytes
-Dry run: not published
+Dry run: not connected to broker
 ```
 
 ### Credential HiveMQ Cloud
@@ -837,6 +919,8 @@ python3 mqtt_publisher.py \
   --port 8883 \
   --topic ecgrhythmia/device01/frame \
   --device-id device01 \
+  --payload-format json \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \
@@ -869,6 +953,8 @@ python3 mqtt_publisher.py \
   --port 8883 \
   --topic ecgrhythmia/device01/frame \
   --device-id device01 \
+  --payload-format json \
+  --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
   --client-id ecgrhythmia-device01-publisher \
@@ -936,6 +1022,22 @@ file. Struktur ringkas:
     "threshold": 0.5,
     "latency_ms": 12.0,
     "runtime": "ai-edge-litert"
+  },
+  "system": {
+    "cpu_usage_percent": 41.2,
+    "memory_usage_percent": 36.7,
+    "memory_usage_mb": 812,
+    "cpu_temperature_c": 56.9,
+    "uptime_s": 19352
+  },
+  "stress_test": {
+    "enabled": true,
+    "frame_counter": 1
+  },
+  "network": {
+    "mqtt_publish_latency_ms": 8.7,
+    "wifi_rssi_dbm": -59,
+    "mqtt_connected": true
   }
 }
 ```
@@ -943,6 +1045,26 @@ file. Struktur ringkas:
 Pada payload aktual, `ecg.samples` berisi 2500 baris x 3 channel dalam satuan
 mV. Payload tidak memuat raw ADC count, local absolute path, username, atau
 password.
+
+`system` adalah benchmark Raspberry Pi per frame: CPU, RAM, dan uptime dari
+`psutil`; temperatur memprioritaskan `/sys/class/thermal/thermal_zone0/temp`.
+Metric yang tidak tersedia bernilai `null`, bukan nilai pengganti. Aktifkan
+`--stress-test` untuk menandai run benchmarking; flag ini tidak menambah beban
+CPU buatan. `frame_counter` memakai frame ID numerik.
+
+`network.mqtt_connected` merekam status koneksi sebelum payload dikirim,
+`wifi_rssi_dbm` dibaca dari `/proc/net/wireless` bila driver memberi dBm, dan
+`mqtt_publish_latency_ms` adalah latency ACK publish terakhir. Karena ACK frame
+yang sama baru diterima setelah payload terkirim, field latency frame pertama
+dapat bernilai `null`.
+
+### Mode NPY
+
+Dengan `--payload-format npy`, ECG dikirim sebagai binary NumPy `float32`
+shape `(2500, 3)` ke `/frame/npy`; binary ini tidak diubah. Topic `/prediction`
+berisi JSON companion dengan `message_id`, `frame_id`, validation, prediction,
+`system`, `stress_test`, dan `network`. Dashboard memasangkan dua pesan memakai
+`message_id` dan `frame_id`.
 
 ### Validasi MQTT
 
@@ -988,8 +1110,12 @@ ECGRHYTHMIA_SYSTEM/
 │   ├── model_interface.py          # Placeholder interface model
 │   ├── model_input_utils.py        # Utilitas persiapan input model
 │   ├── metadata_store.py           # Penyimpanan metadata SQLite
+│   ├── session_manager.py          # Pembuatan/finalisasi session aman
 │   ├── oled_status.py              # Display OLED status
 │   ├── ecgrhythmia-oled.service    # Systemd service OLED
+│   ├── ecgrhythmia-receiver.service # Systemd service receiver
+│   ├── ecgrhythmia-ai.service       # Systemd service AI worker
+│   ├── ecgrhythmia-mqtt.service     # Systemd service MQTT publisher
 │   │
 │   ├── validate_latest_frame.py    # Validasi frame raw terakhir
 │   ├── validate_latest_mv_frame.py # Validasi frame mV terakhir
@@ -1093,7 +1219,8 @@ ECGRHYTHMIA_SYSTEM/
 
 | File | Fungsi |
 |---|---|
-| `receiver.py` | **Program utama receiver.** Membuka serial port, mengirim start commands ke ESP32, mem-parsing packet, meng-buffer, meng-export frame, menjalankan kalibrasi inline, dan meluncurkan Qt Viewer. |
+| `receiver.py` | **Program utama receiver.** Membuka serial port, mengirim start commands ke ESP32, mem-parsing packet, meng-buffer, meng-export frame, menjalankan kalibrasi inline, dan meluncurkan Qt Viewer. Opsi `--new-session` mengarahkan seluruh output ke satu session terisolasi. |
+| `session_manager.py` | Membuat layout sesi, menulis `session.json` secara atomic, menangani collision suffix, finalisasi metadata, dan pembersihan output legacy yang terbatas. |
 | `packet_parser.py` | Parser incremental untuk binary serial packet. Menangani sync recovery, validasi header, CRC check, dan statistik packet loss. |
 | `ecg_buffer.py` | Ring buffer ukuran tetap (2500 sampel) untuk mengakumulasi data ECG selama 10 detik sebelum di-export sebagai satu frame. |
 | `crc16.py` | Implementasi CRC16-CCITT-FALSE di Python (harus identik dengan ESP32). |
@@ -1125,7 +1252,7 @@ ECGRHYTHMIA_SYSTEM/
 
 | File | Fungsi |
 |---|---|
-| `mqtt_publisher.py` | Publisher MQTT untuk mengirim pasangan ECG mV + prediction JSON ke dashboard/HiveMQ Cloud. Mendukung TLS, QoS 1, ACK, dry-run, follow, dan state anti-duplikat. |
+| `mqtt_publisher.py` | Publisher MQTT untuk pasangan ECG mV + prediction. Mendukung JSON/NPY, TLS, QoS 1, ACK, anti-duplikat, telemetry `system`, `stress_test`, dan `network`. |
 | `tests/test_mqtt_publisher.py` | Unit test MQTT publisher dengan mock MQTT client tanpa koneksi internet. |
 
 ### Raspberry Pi — Validasi & Analisis (`raspberry_pi/`)
@@ -1145,7 +1272,7 @@ ECGRHYTHMIA_SYSTEM/
 |---|---|
 | `replay_dataset.py` | Replay offline dataset yang sudah direkam. Menggunakan pipeline kalibrasi dan model input yang sama. |
 | `metadata_store.py` | Penyimpanan metadata frame ke SQLite database. |
-| `oled_status.py` | Standalone app untuk display OLED I2C 128×64. Read-only, tidak menyentuh serial. |
+| `oled_status.py` | App OLED I2C 128×64 dengan rotary menu. Tidak menyentuh serial; mengelola lifecycle service dan session melalui systemd user services. |
 | `ecgrhythmia-oled.service` | Systemd unit file untuk menjalankan OLED status sebagai service. |
 
 ### Raspberry Pi — Test (`raspberry_pi/`)

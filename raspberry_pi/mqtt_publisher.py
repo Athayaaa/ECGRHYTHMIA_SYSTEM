@@ -28,6 +28,11 @@ from typing import Any
 import numpy as np
 
 try:
+    import psutil
+except ImportError:  # pragma: no cover - dependency may be absent on development hosts
+    psutil = None  # type: ignore
+
+try:
     import paho.mqtt.client as mqtt
 except ImportError:  # pragma: no cover - exercised only without dependency
     mqtt = None
@@ -52,6 +57,8 @@ ABSOLUTE_PATH_PATTERN = re.compile(r"(^/)|([A-Za-z]:\\)")
 
 LOGGER = logging.getLogger("mqtt_publisher")
 SCRIPT_DIR = Path(__file__).resolve().parent
+THERMAL_ZONE_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
+WIRELESS_STATUS_PATH = Path("/proc/net/wireless")
 
 
 @dataclass
@@ -109,6 +116,111 @@ class PublisherConfig:
     state_path: Path | None = None
     stable_delay: float = 0.2
     payload_format: str = PAYLOAD_FORMAT_JSON
+    stress_test: bool = False
+
+
+class SystemTelemetry:
+    """Collect one lightweight Raspberry Pi telemetry sample per ready frame."""
+
+    def __init__(self, thermal_path: Path | None = None) -> None:
+        self.thermal_path = thermal_path or THERMAL_ZONE_PATH
+        self.internal_frame_counter = 0
+
+    def warm_up(self) -> None:
+        if psutil is None:
+            return
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
+
+    def collect(self, frame_id: str, stress_enabled: bool) -> tuple[dict[str, Any], dict[str, Any]]:
+        self.internal_frame_counter += 1
+        memory = self._memory()
+        system = {
+            "cpu_usage_percent": self._cpu_usage_percent(),
+            "memory_usage_percent": self._memory_usage_percent(memory),
+            "memory_usage_mb": self._memory_usage_mb(memory),
+            "cpu_temperature_c": self._cpu_temperature_c(),
+            "uptime_s": self._uptime_s(),
+        }
+        try:
+            frame_counter = int(frame_id) if frame_id.isdigit() else self.internal_frame_counter
+        except (TypeError, ValueError):
+            frame_counter = self.internal_frame_counter
+        return system, {
+            "enabled": bool(stress_enabled),
+            "frame_counter": frame_counter,
+        }
+
+    def _cpu_usage_percent(self) -> float | None:
+        if psutil is None:
+            return None
+        try:
+            value = float(psutil.cpu_percent(interval=None))
+        except Exception:
+            return None
+        if not math.isfinite(value):
+            return None
+        return round(min(100.0, max(0.0, value)), 1)
+
+    def _memory(self):
+        if psutil is None:
+            return None
+        try:
+            return psutil.virtual_memory()
+        except Exception:
+            return None
+
+    def _memory_usage_percent(self, memory) -> float | None:
+        try:
+            value = float(memory.percent)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        return round(min(100.0, max(0.0, value)), 1)
+
+    def _memory_usage_mb(self, memory) -> int | None:
+        try:
+            value = float(memory.used) / (1024 * 1024)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        return int(round(value))
+
+    def _cpu_temperature_c(self) -> float | None:
+        try:
+            raw = self.thermal_path.read_text(encoding="utf-8").strip()
+            value = float(raw) / 1000.0
+            if math.isfinite(value) and value != 0:
+                return round(value, 1)
+        except (OSError, ValueError):
+            pass
+        if psutil is None:
+            return None
+        try:
+            temperatures = psutil.sensors_temperatures() or {}
+            for entries in temperatures.values():
+                for entry in entries:
+                    value = float(entry.current)
+                    if math.isfinite(value) and value != 0:
+                        return round(value, 1)
+        except Exception:
+            pass
+        return None
+
+    def _uptime_s(self) -> int | None:
+        if psutil is None:
+            return None
+        try:
+            uptime = time.time() - float(psutil.boot_time())
+        except Exception:
+            return None
+        if not math.isfinite(uptime):
+            return None
+        return max(0, int(uptime))
 
 
 @dataclass
@@ -254,6 +366,7 @@ class MqttConnection:
         self.config = config
         self.client = client
         self.connected = False
+        self.last_publish_latency_ms: float | None = None
 
     def connect(self) -> None:
         if self.connected:
@@ -297,6 +410,7 @@ class MqttConnection:
 
     def publish(self, topic: str, payload: bytes, qos: int, retain: bool) -> None:
         self.connect()
+        started_at = time.perf_counter()
         info = self.client.publish(topic, payload=payload, qos=qos, retain=retain)
         rc = getattr(info, "rc", 0)
         if rc not in (0, None):
@@ -314,6 +428,7 @@ class MqttConnection:
         if callable(is_published) and not is_published():
             self.connected = False
             raise RuntimeError("MQTT publish was not acknowledged")
+        self.last_publish_latency_ms = round((time.perf_counter() - started_at) * 1000.0, 1)
 
     def close(self) -> None:
         if self.client is None:
@@ -325,6 +440,42 @@ class MqttConnection:
                 self.client.disconnect()
         finally:
             self.connected = False
+
+
+def wifi_rssi_dbm(path: Path = WIRELESS_STATUS_PATH) -> int | None:
+    """Read an actual WiFi signal level from procfs when the driver exposes dBm."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[2:]
+    except OSError:
+        return None
+    for line in lines:
+        if ":" not in line:
+            continue
+        interface, values = line.split(":", 1)
+        if not interface.strip().startswith("wlan"):
+            continue
+        fields = values.split()
+        if len(fields) < 3:
+            continue
+        try:
+            signal = float(fields[2].rstrip("."))
+        except ValueError:
+            continue
+        # Positive values are driver-specific quality values, not dBm.
+        if math.isfinite(signal) and signal < 0:
+            return int(round(signal))
+    return None
+
+
+def collect_network_metrics(connection: MqttConnection | None) -> dict[str, Any]:
+    latency = connection.last_publish_latency_ms if connection is not None else None
+    if latency is not None and not math.isfinite(latency):
+        latency = None
+    return {
+        "mqtt_publish_latency_ms": latency,
+        "wifi_rssi_dbm": wifi_rssi_dbm(),
+        "mqtt_connected": bool(connection is not None and connection.connected),
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -353,6 +504,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--follow", action="store_true")
     mode_group.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--stress-test",
+        action="store_true",
+        help="Mark each payload as part of a system stress-test run",
+    )
     parser.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL_S)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")
@@ -392,6 +548,7 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
         state_path=state_path,
         stable_delay=min(0.2, poll_interval * 0.4),
         payload_format=args.payload_format,
+        stress_test=args.stress_test,
     )
 
 
@@ -677,6 +834,9 @@ def prepare_frame(
     device_id: str,
     ecg_dir: Path,
     ecg_sha256: str | None = None,
+    telemetry: SystemTelemetry | None = None,
+    stress_test: bool = False,
+    network: dict[str, Any] | None = None,
 ) -> PreparedFrame:
     frame_match = ECG_PATTERN.match(ecg_path.name)
     if frame_match is None:
@@ -704,6 +864,8 @@ def prepare_frame(
     message_id = f"{sanitize_id(device_id)}-{session_id}-frame_{frame_id}"
     if ecg_sha256 is None:
         ecg_sha256 = sha256_file(ecg_path)
+    system, stress_payload = (telemetry or SystemTelemetry()).collect(frame_id, stress_test)
+    network = network or collect_network_metrics(None)
     payload = build_payload(
         samples=samples,
         metadata=metadata,
@@ -714,6 +876,9 @@ def prepare_frame(
         message_id=message_id,
         validation_status=validation_status,
         validation_warnings=validation_warnings,
+        system=system,
+        stress_test=stress_payload,
+        network=network,
     )
     reject_absolute_paths(payload)
     payload_bytes = json_bytes(payload)
@@ -756,6 +921,9 @@ def build_npy_prediction_payload(
         "channel_order": prepared.payload["channel_order"],
         "validation": prepared.payload["validation"],
         "prediction": prepared.payload["prediction"],
+        "system": prepared.payload["system"],
+        "stress_test": prepared.payload["stress_test"],
+        "network": prepared.payload["network"],
     }
     return normalize_json_value(payload)
 
@@ -780,6 +948,9 @@ def build_payload(
     message_id: str,
     validation_status: str,
     validation_warnings: list[str],
+    system: dict[str, Any],
+    stress_test: dict[str, Any],
+    network: dict[str, Any],
 ) -> dict[str, Any]:
     sampling_rate_hz = value_from_sources(
         (metadata or {}).get("sample_rate_hz"),
@@ -824,6 +995,9 @@ def build_payload(
             "samples": samples.astype(np.float32, copy=False).tolist(),
         },
         "prediction": compact_dict(prediction_payload),
+        "system": system,
+        "stress_test": stress_test,
+        "network": network,
     }
     return normalize_json_value(payload)
 
@@ -895,13 +1069,37 @@ def sanitize_id(value: str) -> str:
     return sanitized.strip("_") or "default"
 
 
+def telemetry_summary(system: dict[str, Any]) -> str:
+    def value(key: str, suffix: str = "") -> str:
+        metric = system.get(key)
+        return f"{metric}{suffix}" if metric is not None else "N/A"
+
+    return (
+        f"CPU {value('cpu_usage_percent', '%')}, "
+        f"RAM {value('memory_usage_percent', '%')}, "
+        f"TEMP {value('cpu_temperature_c', ' C')}"
+    )
+
+
+def network_summary(network: dict[str, Any]) -> str:
+    latency = network.get("mqtt_publish_latency_ms")
+    rssi = network.get("wifi_rssi_dbm")
+    return (
+        f"MQTT {'connected' if network.get('mqtt_connected') else 'disconnected'}, "
+        f"LAT {latency if latency is not None else 'N/A'} ms, "
+        f"RSSI {rssi if rssi is not None else 'N/A'} dBm"
+    )
+
+
 def scan_once(
     config: PublisherConfig,
     *,
     state: PublishState,
     connection: MqttConnection | None,
+    telemetry: SystemTelemetry | None = None,
 ) -> ScanStats:
     stats = ScanStats()
+    telemetry = telemetry or SystemTelemetry()
     frames = discover_ecg_frames(config.ecg_dir)
     payload_format = config.payload_format
     for frame_id, ecg_path in frames:
@@ -937,12 +1135,27 @@ def scan_once(
                 LOGGER.info("Frame %s waiting for prediction", frame_id)
                 continue
 
+            if not config.dry_run:
+                if connection is None:
+                    stats.errors += 1
+                    LOGGER.warning("MQTT disconnected, retrying: MQTT connection is not available")
+                    break
+                try:
+                    connection.connect()
+                except Exception as error:
+                    stats.errors += 1
+                    LOGGER.warning("MQTT disconnected, retrying: %s", error)
+                    break
+
             prepared = prepare_frame(
                 ecg_path,
                 prediction_path,
                 device_id=config.device_id,
                 ecg_dir=config.ecg_dir,
                 ecg_sha256=ecg_sha256,
+                telemetry=telemetry,
+                stress_test=config.stress_test,
+                network=collect_network_metrics(connection),
             )
         except (OSError, ValueError, json.JSONDecodeError) as error:
             stats.rejected += 1
@@ -963,6 +1176,9 @@ def scan_once(
             continue
 
         stats.ready += 1
+        system = prepared.payload["system"]
+        stress_test = prepared.payload["stress_test"]
+        network = prepared.payload["network"]
         json_topic = json_frame_topic(config)
         npy_topic = npy_frame_topic(config)
         pred_topic = prediction_topic(config)
@@ -981,6 +1197,12 @@ def scan_once(
         if config.dry_run:
             print(f"Frame {prepared.frame_id} ready")
             print(f"Format: {payload_format.upper()}")
+            print(f"Frame {prepared.frame_id} telemetry: {telemetry_summary(system)}")
+            print(f"Frame {prepared.frame_id} network: {network_summary(network)}")
+            print(
+                f"Frame {prepared.frame_id} stress test: "
+                f"{'enabled' if stress_test['enabled'] else 'disabled'}"
+            )
             if payload_format == PAYLOAD_FORMAT_NPY:
                 print(f"ECG topic: {npy_topic}")
                 print(f"Prediction topic: {pred_topic}")
@@ -1005,6 +1227,10 @@ def scan_once(
                 raise RuntimeError("MQTT connection is not available")
             LOGGER.info("Frame %s ready", prepared.frame_id)
             LOGGER.info("Format: %s", payload_format.upper())
+            LOGGER.info("Frame %s telemetry: %s", prepared.frame_id, telemetry_summary(system))
+            LOGGER.info("Frame %s network: %s", prepared.frame_id, network_summary(network))
+            if stress_test["enabled"]:
+                LOGGER.info("Frame %s stress test: enabled", prepared.frame_id)
             if payload_format == PAYLOAD_FORMAT_NPY:
                 LOGGER.info("ECG topic: %s", npy_topic)
                 LOGGER.info("Prediction topic: %s", pred_topic)
@@ -1066,16 +1292,18 @@ def run_publisher(config: PublisherConfig, client: Any | None = None) -> ScanSta
     state_path = config.state_path or (config.prediction_dir / "mqtt_publish_state.json")
     state = PublishState.load(state_path)
     connection = None if config.dry_run else MqttConnection(config, client=client)
+    telemetry = SystemTelemetry()
+    telemetry.warm_up()
     total = ScanStats()
 
     try:
         if config.once:
-            stats = scan_once(config, state=state, connection=connection)
+            stats = scan_once(config, state=state, connection=connection, telemetry=telemetry)
             total.add(stats)
             return total
 
         while True:
-            stats = scan_once(config, state=state, connection=connection)
+            stats = scan_once(config, state=state, connection=connection, telemetry=telemetry)
             total.add(stats)
             time.sleep(config.poll_interval)
     finally:
