@@ -229,7 +229,9 @@ MQTT_TLS=1
 ```
 
 Untuk HiveMQ Cloud, `MQTT_TLS=1` wajib agar service meneruskan `--tls` ke
-publisher. Setelah mengubah file ini atau unit MQTT, jalankan
+publisher. Service memvalidasi semua variabel session dan MQTT saat mulai,
+sehingga error konfigurasi tampil jelas di journal. Setelah mengubah file ini
+atau unit MQTT, jalankan
 `systemctl --user daemon-reload` lalu restart service MQTT.
 
 ## User Services

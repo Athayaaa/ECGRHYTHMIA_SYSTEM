@@ -13,7 +13,7 @@ Environment=MQTT_DEVICE_ID=device01
 Environment=MQTT_TLS=0
 EnvironmentFile=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/runtime/current_session.env
 EnvironmentFile=-/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/runtime/mqtt_credentials.env
-ExecStart=/bin/bash -lc 'args=(--ecg-dir "$CALIBRATED_DIR" --prediction-dir "$PREDICTION_DIR" --broker "$MQTT_BROKER" --port "$MQTT_PORT" --topic "$MQTT_TOPIC" --device-id "$MQTT_DEVICE_ID" --follow); if [ -n "${MQTT_USERNAME:-}" ]; then args+=(--username "$MQTT_USERNAME" --password-env MQTT_PASSWORD); fi; case "${MQTT_TLS:-0}" in 1|true|TRUE|yes|YES) args+=(--tls);; esac; exec /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/venv/bin/python /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/mqtt_publisher.py "${args[@]}"'
+ExecStart=/bin/bash /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/run_mqtt_service.sh
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=8
