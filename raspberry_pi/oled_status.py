@@ -45,6 +45,7 @@ STALE_THRESHOLD_S = 15.0
 REFRESH_FLOOR_S = 0.5
 INPUT_POLL_S = 0.03
 DEFAULT_GREETING_SECONDS = 3.0
+OLED_TEXT_CHARS = 21
 DISK_FULL_PCT = 90.0
 TEMP_HIGH_C = 75.0
 FRAME_GLOB = "frame_*.json"
@@ -725,7 +726,7 @@ class SessionController:
             result = self.services.start(service)
             if not result.ok:
                 feedback.append(f"{label} ERROR")
-                feedback.append(result.message[:16] or result.status)
+                feedback.append(result.message[:OLED_TEXT_CHARS] or result.status)
                 return ActionResult(False, "SERVICE ERROR", feedback[-4:])
             feedback.append(f"{label} OK" if result.status != "N/A" else f"{label} N/A")
 
@@ -742,7 +743,7 @@ class SessionController:
             result = self.services.stop(service)
             if not result.ok:
                 feedback.append(f"{label} ERROR")
-                feedback.append(result.message[:16] or result.status)
+                feedback.append(result.message[:OLED_TEXT_CHARS] or result.status)
                 return ActionResult(False, "SERVICE ERROR", feedback[-4:])
             feedback.append(f"{label} OFF" if result.status != "N/A" else f"{label} N/A")
         feedback.append("SESSION SAVED")
@@ -752,7 +753,7 @@ class SessionController:
     def restart_service(self, service: str, label: str) -> ActionResult:
         result = self.services.restart(service)
         if not result.ok:
-            return ActionResult(False, "SERVICE ERROR", [label, result.message[:16] or result.status])
+            return ActionResult(False, "SERVICE ERROR", [label, result.message[:OLED_TEXT_CHARS] or result.status])
         return ActionResult(True, "SAVED", [label, "RESTARTED"])
 
     def reboot(self) -> ActionResult:
@@ -766,9 +767,9 @@ class SessionController:
                 check=False,
             )
         except Exception as exc:
-            return ActionResult(False, "SERVICE ERROR", ["REBOOT ERROR", str(exc)[:16]])
+            return ActionResult(False, "SERVICE ERROR", ["REBOOT ERROR", str(exc)[:OLED_TEXT_CHARS]])
         if result.returncode != 0:
-            return ActionResult(False, "SERVICE ERROR", ["REBOOT ERROR", (result.stderr or "")[:16]])
+            return ActionResult(False, "SERVICE ERROR", ["REBOOT ERROR", (result.stderr or "")[:OLED_TEXT_CHARS]])
         return ActionResult(True, "REBOOT", ["REBOOTING"])
 
     def shutdown(self) -> ActionResult:
@@ -782,9 +783,9 @@ class SessionController:
                 check=False,
             )
         except Exception as exc:
-            return ActionResult(False, "SERVICE ERROR", ["SHUTDOWN ERROR", str(exc)[:16]])
+            return ActionResult(False, "SERVICE ERROR", ["SHUTDOWN ERROR", str(exc)[:OLED_TEXT_CHARS]])
         if result.returncode != 0:
-            return ActionResult(False, "SERVICE ERROR", ["SHUTDOWN ERROR", (result.stderr or "")[:16]])
+            return ActionResult(False, "SERVICE ERROR", ["SHUTDOWN ERROR", (result.stderr or "")[:OLED_TEXT_CHARS]])
         return ActionResult(True, "SHUTDOWN", ["POWERING OFF"])
 
 
@@ -1131,13 +1132,16 @@ class MenuController:
             return render_confirm_lines(self.confirm_prompt, self.confirm_selected)
         if self.mode == "hold_confirm":
             title = "HOLD TO " + self.hold_action.upper()
-            return [title[:16], "", "Long press", "to confirm", "Short: cancel"]
+            return [title[:OLED_TEXT_CHARS], "", "Long press", "to confirm", "Short: cancel"]
         if self.mode == "adjust":
             return render_adjust_lines(self.adjust_kind, self.adjust_options, self.adjust_selected)
         if self.mode == "detail":
             return render_detail_lines(self.detail_kind, snap, self.service_manager)
         if self.mode == "message":
-            return [self.message_title[:16], *[line[:16] for line in self.message_lines]]
+            return [
+                self.message_title[:OLED_TEXT_CHARS],
+                *[line[:OLED_TEXT_CHARS] for line in self.message_lines],
+            ]
         return render_main_lines(snap)
 
 
@@ -1184,7 +1188,7 @@ def render_main_lines(snap: StatusSnapshot) -> list[str]:
         return [
             "ECGRHYTHMIA",
             f"ERROR {snap.error_code}",
-            snap.error_cause[:16],
+            snap.error_cause[:OLED_TEXT_CHARS],
             "Press: Menu",
         ]
     if snap.state == "RECORDING":
@@ -1203,7 +1207,7 @@ def render_main_lines(snap: StatusSnapshot) -> list[str]:
         ]
     return [
         "ECGRHYTHMIA",
-        snap.state[:16],
+        snap.state[:OLED_TEXT_CHARS],
         f"Last: {_fmt_frame(snap.frame_index)}",
         "Press: Menu",
     ]
@@ -1228,29 +1232,29 @@ def render_page_lines(snap: StatusSnapshot, page: int) -> list[str]:
 
 def render_menu_lines(menu_name: str, selected: int) -> list[str]:
     items = MENUS[menu_name]
-    title = menu_name.upper()[:16]
+    title = menu_name.upper()[:OLED_TEXT_CHARS]
     start = max(0, min(selected - 1, max(0, len(items) - 4)))
     visible = items[start : start + 4]
     lines = [title]
     for idx, item in enumerate(visible, start=start):
         prefix = ">" if idx == selected else " "
-        lines.append(f"{prefix}{item.label}"[:16])
+        lines.append(f"{prefix}{item.label}"[:OLED_TEXT_CHARS])
     return lines
 
 
 def render_confirm_lines(prompt: str, selected: int) -> list[str]:
     return [
-        prompt[:16],
+        prompt[:OLED_TEXT_CHARS],
         f"{'>' if selected == 0 else ' '}NO",
         f"{'>' if selected == 1 else ' '}YES",
     ]
 
 
 def render_adjust_lines(kind: str, options: list[tuple[str, object]], selected: int) -> list[str]:
-    lines = [kind.upper()[:16]]
+    lines = [kind.upper()[:OLED_TEXT_CHARS]]
     for idx, (label, _value) in enumerate(options[:4]):
         prefix = ">" if idx == selected else " "
-        lines.append(f"{prefix}{label}"[:16])
+        lines.append(f"{prefix}{label}"[:OLED_TEXT_CHARS])
     return lines
 
 
@@ -1261,13 +1265,13 @@ def render_detail_lines(
 ) -> list[str]:
     if kind in ("receiver_status",):
         status = services.status(RECEIVER_SERVICE) if services else snap.receiver
-        return ["RECEIVER", f"STATUS {status}"[:16], "Back: hold"]
+        return ["RECEIVER", f"STATUS {status}"[:OLED_TEXT_CHARS], "Back: hold"]
     if kind in ("ai_status",):
         status = services.status(AI_SERVICE) if services else snap.ai
-        return ["AI WORKER", f"STATUS {status}"[:16], "Back: hold"]
+        return ["AI WORKER", f"STATUS {status}"[:OLED_TEXT_CHARS], "Back: hold"]
     if kind in ("mqtt_status",):
         status = services.status(MQTT_SERVICE) if services else snap.mqtt
-        return ["MQTT", f"STATUS {status}"[:16], "Back: hold"]
+        return ["MQTT", f"STATUS {status}"[:OLED_TEXT_CHARS], "Back: hold"]
     if kind == "acquisition":
         return [
             "ACQUISITION",
@@ -1279,7 +1283,7 @@ def render_detail_lines(
     if kind == "network":
         return [
             "NETWORK",
-            f"IP {snap.ip_address}"[:16],
+            f"IP {snap.ip_address}"[:OLED_TEXT_CHARS],
             f"MQTT {snap.mqtt}",
             f"NET {snap.net}",
         ]
@@ -1290,7 +1294,7 @@ def render_detail_lines(
             "RASPBERRY PI",
             f"TEMP {temp}",
             f"DISK {disk}",
-            f"UP {_fmt_hms(snap.uptime_seconds)}"[:16],
+            f"UP {_fmt_hms(snap.uptime_seconds)}"[:OLED_TEXT_CHARS],
         ]
     if kind == "storage":
         return [
@@ -1348,7 +1352,7 @@ class OledRenderer:
         with canvas(self.device) as draw:
             y = 0
             for line in lines[:5]:
-                draw.text((0, y), line[:16], font=self.font, fill=255)
+                draw.text((0, y), line[:OLED_TEXT_CHARS], font=self.font, fill=255)
                 y += 12
         self.blank = False
 
