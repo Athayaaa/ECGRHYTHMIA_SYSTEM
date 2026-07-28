@@ -219,11 +219,18 @@ chmod 600 runtime/mqtt_credentials.env
 Contoh:
 
 ```text
-MQTT_BROKER=example.s1.eu.hivemq.cloud
+MQTT_BROKER=93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud
 MQTT_PORT=8883
-MQTT_USERNAME=ecgrhythmia
+MQTT_TOPIC=ecgrhythmia/device01
+MQTT_DEVICE_ID=device01
+MQTT_USERNAME=ecg-undip
 MQTT_PASSWORD=isi_password_di_sini
+MQTT_TLS=1
 ```
+
+Untuk HiveMQ Cloud, `MQTT_TLS=1` wajib agar service meneruskan `--tls` ke
+publisher. Setelah mengubah file ini atau unit MQTT, jalankan
+`systemctl --user daemon-reload` lalu restart service MQTT.
 
 ## User Services
 
