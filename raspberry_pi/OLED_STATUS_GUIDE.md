@@ -88,19 +88,6 @@ python3 oled_status.py --self-test
 
 Console mode tidak memakai OLED dan tidak memakai GPIO.
 
-## Preview Pixel UI
-
-Preview tidak memakai I2C, GPIO, serial, atau service. Gunakan ini untuk
-memeriksa tampilan 128x64 sebelum menjalankan OLED fisik:
-
-```bash
-python3 oled_status.py --preview-dir /tmp/oled_preview
-ls /tmp/oled_preview
-```
-
-Mode ini menyimpan PNG untuk READY, RECORDING, ERROR, menu utama, submenu,
-dialog konfirmasi, dan toast sukses.
-
 ## Run OLED
 
 ```bash
@@ -172,7 +159,6 @@ Submenu Display:
 
 - Brightness: 25%, 50%, 75%, 100%
 - Screen Timeout: Off, 30 seconds, 60 seconds, 5 minutes
-- Animations: On, Off
 - Invert Display
 - Back
 
@@ -259,16 +245,43 @@ sesuai menu Recording. Jika user service manager belum aktif saat boot:
 loginctl enable-linger athaya
 ```
 
-## Tampilan Pixel UI
+## Status Pages
 
-Tampilan OLED menggunakan buffer monokrom 128x64 penuh: header dengan badge
-status, ikon pixel, kartu menu putih terpilih (teks dan ikon hitam), scrollbar,
-progress bar, dialog konfirmasi, dan toast hasil aksi. Halaman utama menampilkan
-READY, REC, WAIT, atau ERROR secara grafis; halaman detail menampilkan
-Acquisition, Network, Raspberry Pi, dan Storage tanpa membaca prediksi AI.
+Halaman utama:
 
-Saat `Animations` aktif, perpindahan kartu menu memakai slide pendek sekitar
-150 ms. Event rotary tetap diproses di main loop selama transisi berlangsung.
+```text
+ECGRHYTHMIA
+READY
+Last: F0015
+Press: Menu
+```
+
+Saat recording:
+
+```text
+ECGRHYTHMIA
+RECORDING
+00:02  F0015
+Press: Menu
+```
+
+Saat receiver aktif tetapi frame tidak baru:
+
+```text
+ECGRHYTHMIA
+WAITING FRAME
+Receiver: ON
+Press: Menu
+```
+
+Error overlay:
+
+```text
+ECGRHYTHMIA
+ERROR E03
+NO NEW FRAME
+Press: Menu
+```
 
 ## Error Codes
 
