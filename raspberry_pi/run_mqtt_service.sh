@@ -30,4 +30,8 @@ case "${MQTT_TLS:-0}" in
   1|true|TRUE|yes|YES) args+=(--tls) ;;
 esac
 
+case "${MQTT_JSON_TOPIC_EXACT:-0}" in
+  1|true|TRUE|yes|YES) args+=(--json-topic-exact) ;;
+esac
+
 exec "$SCRIPT_DIR/venv/bin/python" "$SCRIPT_DIR/mqtt_publisher.py" "${args[@]}"

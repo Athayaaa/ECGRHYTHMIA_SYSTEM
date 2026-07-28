@@ -117,6 +117,7 @@ class PublisherConfig:
     stable_delay: float = 0.2
     payload_format: str = PAYLOAD_FORMAT_JSON
     stress_test: bool = False
+    json_topic_exact: bool = False
 
 
 class SystemTelemetry:
@@ -501,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=PAYLOAD_FORMAT_JSON,
         help="MQTT ECG payload format: json publishes one JSON message, npy publishes ECG NPY plus prediction JSON",
     )
+    parser.add_argument(
+        "--json-topic-exact",
+        action="store_true",
+        help="Publish JSON directly to --topic instead of appending /frame/json",
+    )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--follow", action="store_true")
     mode_group.add_argument("--once", action="store_true")
@@ -549,6 +555,7 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
         stable_delay=min(0.2, poll_interval * 0.4),
         payload_format=args.payload_format,
         stress_test=args.stress_test,
+        json_topic_exact=args.json_topic_exact,
     )
 
 
@@ -572,6 +579,8 @@ def topic_for(config: PublisherConfig, suffix: str) -> str:
 
 
 def json_frame_topic(config: PublisherConfig) -> str:
+    if config.json_topic_exact:
+        return config.topic.strip().strip("/")
     return topic_for(config, "frame/json")
 
 

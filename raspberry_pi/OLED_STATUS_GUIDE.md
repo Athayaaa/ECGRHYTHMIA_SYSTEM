@@ -226,6 +226,7 @@ MQTT_DEVICE_ID=device01
 MQTT_USERNAME=ecg-undip
 MQTT_PASSWORD=isi_password_di_sini
 MQTT_TLS=1
+MQTT_JSON_TOPIC_EXACT=1
 ```
 
 Untuk HiveMQ Cloud, `MQTT_TLS=1` wajib agar service meneruskan `--tls` ke
@@ -233,6 +234,10 @@ publisher. Service memvalidasi semua variabel session dan MQTT saat mulai,
 sehingga error konfigurasi tampil jelas di journal. Setelah mengubah file ini
 atau unit MQTT, jalankan
 `systemctl --user daemon-reload` lalu restart service MQTT.
+
+`MQTT_JSON_TOPIC_EXACT=1` membuat payload JSON dikirim tepat ke nilai
+`MQTT_TOPIC`, yaitu `ecgrhythmia/device01` pada contoh di atas. Nilai `0`
+mempertahankan topic default `.../frame/json`.
 
 ## User Services
 

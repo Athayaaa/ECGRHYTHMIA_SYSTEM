@@ -234,6 +234,10 @@ class PayloadValidationTests(TestCase):
         self.assertEqual(default_config.payload_format, "json")
         self.assertEqual(json_config.payload_format, "json")
         self.assertEqual(npy_config.payload_format, "npy")
+        exact_config = mqtt_publisher.resolve_config(
+            parser.parse_args([*base_args, "--json-topic-exact"])
+        )
+        self.assertTrue(exact_config.json_topic_exact)
         with self.assertRaises(SystemExit):
             parser.parse_args([*base_args, "--payload-format", "csv"])
 
@@ -500,6 +504,28 @@ class StateAndPublishTests(TestCase):
             self.assertIn("stress_test", decoded)
             self.assertEqual(decoded["network"]["mqtt_publish_latency_ms"], None)
             self.assertTrue(decoded["network"]["mqtt_connected"])
+
+    def test_json_publish_can_use_exact_configured_topic(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ecg_dir, prediction_dir = write_pair(root)
+            config = mqtt_publisher.PublisherConfig(
+                ecg_dir=ecg_dir,
+                prediction_dir=prediction_dir,
+                broker="localhost",
+                topic="ecgrhythmia/device01",
+                device_id="device01",
+                json_topic_exact=True,
+                dry_run=False,
+                stable_delay=0,
+                state_path=prediction_dir / "mqtt_publish_state.json",
+            )
+            client = MockMqttClient()
+
+            stats = mqtt_publisher.run_publisher(config, client=client)
+
+            self.assertEqual(stats.sent, 1)
+            self.assertEqual(client.published[0][0], "ecgrhythmia/device01")
 
     def test_npy_publish_sends_ecg_then_prediction(self):
         with tempfile.TemporaryDirectory() as td:
