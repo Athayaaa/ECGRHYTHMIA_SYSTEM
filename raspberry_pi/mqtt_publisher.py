@@ -584,6 +584,14 @@ def json_frame_topic(config: PublisherConfig) -> str:
     return topic_for(config, "frame/json")
 
 
+def state_topic_scope(config: PublisherConfig) -> str:
+    """Keep exact-topic JSON publishes distinct from the default JSON topic."""
+    base_topic = normalize_base_topic(config.topic)
+    if config.payload_format == PAYLOAD_FORMAT_JSON and config.json_topic_exact:
+        return f"{base_topic}#json-exact"
+    return base_topic
+
+
 def npy_frame_topic(config: PublisherConfig) -> str:
     return topic_for(config, "frame/npy")
 
@@ -1111,6 +1119,7 @@ def scan_once(
     telemetry = telemetry or SystemTelemetry()
     frames = discover_ecg_frames(config.ecg_dir)
     payload_format = config.payload_format
+    state_topic = state_topic_scope(config)
     for frame_id, ecg_path in frames:
         try:
             if not is_file_stable(ecg_path, delay=config.stable_delay):
@@ -1125,7 +1134,7 @@ def scan_once(
                     frame_id=frame_id,
                     ecg_sha256=ecg_sha256,
                     broker=config.broker,
-                    base_topic=config.topic,
+                    base_topic=state_topic,
                     payload_format=payload_format,
                 )
             ):
@@ -1176,7 +1185,7 @@ def scan_once(
             and state.is_sent(
                 prepared,
                 config.broker,
-                config.topic,
+                state_topic,
                 payload_format,
             )
         ):
@@ -1281,7 +1290,7 @@ def scan_once(
             prepared,
             config.broker,
             config.port,
-            config.topic,
+            state_topic,
             config.qos,
             payload_format,
             sent_topics,

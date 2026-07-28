@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from io import BytesIO
@@ -526,6 +527,30 @@ class StateAndPublishTests(TestCase):
 
             self.assertEqual(stats.sent, 1)
             self.assertEqual(client.published[0][0], "ecgrhythmia/device01")
+
+    def test_exact_json_topic_is_not_skipped_after_default_json_publish(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ecg_dir, prediction_dir = write_pair(root)
+            state_path = prediction_dir / "mqtt_publish_state.json"
+            default_config = mqtt_publisher.PublisherConfig(
+                ecg_dir=ecg_dir,
+                prediction_dir=prediction_dir,
+                broker="localhost",
+                topic="ecgrhythmia/device01",
+                device_id="device01",
+                dry_run=False,
+                stable_delay=0,
+                state_path=state_path,
+            )
+            exact_config = dataclasses.replace(default_config, json_topic_exact=True)
+
+            mqtt_publisher.run_publisher(default_config, client=MockMqttClient())
+            exact_client = MockMqttClient()
+            exact_stats = mqtt_publisher.run_publisher(exact_config, client=exact_client)
+
+            self.assertEqual(exact_stats.sent, 1)
+            self.assertEqual(exact_client.published[0][0], "ecgrhythmia/device01")
 
     def test_npy_publish_sends_ecg_then_prediction(self):
         with tempfile.TemporaryDirectory() as td:
