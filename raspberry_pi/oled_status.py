@@ -12,6 +12,7 @@ import argparse
 import glob
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -46,6 +47,11 @@ REFRESH_FLOOR_S = 0.5
 INPUT_POLL_S = 0.03
 DEFAULT_GREETING_SECONDS = 3.0
 OLED_TEXT_CHARS = 21
+OLED_WIDTH = 128
+OLED_HEIGHT = 64
+OLED_MARGIN = 3
+MENU_ANIMATION_S = 0.15
+TOAST_SECONDS = 2.0
 DISK_FULL_PCT = 90.0
 TEMP_HIGH_C = 75.0
 FRAME_GLOB = "frame_*.json"
@@ -132,6 +138,7 @@ class OledSettings:
     timeout_seconds: int = 0
     invert: bool = False
     encoder_reverse: bool = False
+    animations: bool = True
 
     @classmethod
     def load(cls, path: Path = OLED_SETTINGS_PATH) -> "OledSettings":
@@ -152,6 +159,7 @@ class OledSettings:
             timeout_seconds=timeout_seconds,
             invert=bool(data.get("invert", False)),
             encoder_reverse=bool(data.get("encoder_reverse", False)),
+            animations=bool(data.get("animations", True)),
         )
 
     def save(self, path: Path = OLED_SETTINGS_PATH) -> None:
@@ -162,6 +170,7 @@ class OledSettings:
                 "timeout_seconds": self.timeout_seconds,
                 "invert": self.invert,
                 "encoder_reverse": self.encoder_reverse,
+                "animations": self.animations,
                 "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             },
         )
@@ -914,6 +923,7 @@ MENUS: dict[str, list[MenuItem]] = {
     "display": [
         MenuItem("Brightness", action="brightness"),
         MenuItem("Screen Timeout", action="screen_timeout"),
+        MenuItem("Animations", action="animations"),
         MenuItem("Invert Display", action="invert_display"),
         MenuItem("Back", action="back"),
     ],
@@ -951,6 +961,9 @@ class MenuController:
         self.adjust_kind = ""
         self.adjust_options: list[tuple[str, object]] = []
         self.adjust_selected = 0
+        self.message_until = 0.0
+        self.animation_started_at = 0.0
+        self.animation_direction = 0
 
     @property
     def current_menu(self) -> str:
@@ -958,6 +971,24 @@ class MenuController:
 
     def wake(self) -> None:
         self.last_input_at = time.monotonic()
+
+    def animate(self, direction: int = 1) -> None:
+        if self.settings.animations:
+            self.animation_started_at = time.monotonic()
+            self.animation_direction = 1 if direction >= 0 else -1
+
+    def animation_active(self, now: Optional[float] = None) -> bool:
+        if not self.settings.animations or not self.animation_started_at:
+            return False
+        elapsed = (now if now is not None else time.monotonic()) - self.animation_started_at
+        return 0.0 <= elapsed < MENU_ANIMATION_S
+
+    def animation_offset(self, now: Optional[float] = None) -> int:
+        if not self.animation_active(now):
+            return 0
+        elapsed = (now if now is not None else time.monotonic()) - self.animation_started_at
+        progress = min(1.0, elapsed / MENU_ANIMATION_S)
+        return int((1.0 - progress) * 10 * self.animation_direction)
 
     def handle(self, event: InputEvent) -> None:
         self.wake()
@@ -981,6 +1012,9 @@ class MenuController:
                 self.back()
 
     def tick(self) -> None:
+        if self.mode == "message" and self.message_until and time.monotonic() >= self.message_until:
+            self.mode = "menu"
+            self.message_until = 0.0
         if self.mode != "status" and time.monotonic() - self.last_input_at > self.menu_timeout_s:
             self.mode = "status"
             self.menu_stack = ["main"]
@@ -990,6 +1024,7 @@ class MenuController:
         self.mode = "menu"
         self.menu_stack = ["main"]
         self.selected = 0
+        self.animate(1)
 
     def back(self) -> None:
         if self.mode == "hold_confirm":
@@ -997,10 +1032,12 @@ class MenuController:
             return
         if self.mode in ("message", "detail", "confirm", "adjust"):
             self.mode = "menu"
+            self.animate(-1)
             return
         if self.mode == "menu" and len(self.menu_stack) > 1:
             self.menu_stack.pop()
             self.selected = 0
+            self.animate(-1)
             return
         self.mode = "status"
 
@@ -1008,6 +1045,7 @@ class MenuController:
         items = MENUS[self.current_menu]
         if event.kind == "rotate":
             self.selected = (self.selected + event.delta) % len(items)
+            self.animate(event.delta)
             return
         if event.kind != "select":
             return
@@ -1015,12 +1053,14 @@ class MenuController:
         if item.submenu:
             self.menu_stack.append(item.submenu)
             self.selected = 0
+            self.animate(1)
             return
         self._run_menu_action(item.action or "")
 
     def _handle_confirm(self, event: InputEvent) -> None:
         if event.kind == "rotate":
             self.confirm_selected = (self.confirm_selected + event.delta) % 2
+            self.animate(event.delta)
             return
         if event.kind != "select":
             return
@@ -1040,6 +1080,7 @@ class MenuController:
     def _handle_adjust(self, event: InputEvent) -> None:
         if event.kind == "rotate":
             self.adjust_selected = (self.adjust_selected + event.delta) % len(self.adjust_options)
+            self.animate(event.delta)
             return
         if event.kind != "select":
             return
@@ -1070,6 +1111,10 @@ class MenuController:
             self.adjust("brightness", [("25%", 25), ("50%", 50), ("75%", 75), ("100%", 100)])
         elif action == "screen_timeout":
             self.adjust("timeout", [("Off", 0), ("30 sec", 30), ("60 sec", 60), ("5 min", 300)])
+        elif action == "animations":
+            self.settings.animations = not self.settings.animations
+            self.settings.save()
+            self.show_message("SAVED", ["ANIMATIONS", "ON" if self.settings.animations else "OFF"])
         elif action == "invert_display":
             self.settings.invert = not self.settings.invert
             self.settings.save()
@@ -1100,6 +1145,7 @@ class MenuController:
         self.mode = "message"
         self.message_title = title
         self.message_lines = lines[:4]
+        self.message_until = time.monotonic() + TOAST_SECONDS
 
     def _execute_action(self, action: str) -> None:
         if action == "start":
@@ -1314,6 +1360,327 @@ def render_console(lines: list[str]) -> str:
 
 
 # ==========================================================================
+# Pixel UI drawing
+# ==========================================================================
+def _text_width(draw, text: str, font) -> int:
+    try:
+        return int(draw.textbbox((0, 0), text, font=font)[2])
+    except AttributeError:  # pragma: no cover - legacy Pillow
+        return int(draw.textsize(text, font=font)[0])
+
+
+def truncate_text(draw, text: object, font, max_width: int) -> str:
+    """Return text that fits in max_width pixels, adding an ellipsis if needed."""
+    value = str(text if text not in (None, "") else NA)
+    if _text_width(draw, value, font) <= max_width:
+        return value
+    suffix = "..."
+    while value and _text_width(draw, value + suffix, font) > max_width:
+        value = value[:-1]
+    return (value + suffix) if value else suffix
+
+
+def _rounded_rectangle(draw, box, radius: int, **kwargs) -> None:
+    try:
+        draw.rounded_rectangle(box, radius=radius, **kwargs)
+    except AttributeError:  # pragma: no cover - old Pillow on older Pi images
+        draw.rectangle(box, **kwargs)
+
+
+def draw_icon(draw, name: str, x: int, y: int, size: int = 12, fill: int = 255) -> None:
+    """Draw compact, deliberately simple icons without external image assets."""
+    s = max(8, size)
+    x2, y2 = x + s - 1, y + s - 1
+    mid_x, mid_y = x + s // 2, y + s // 2
+    width = max(1, s // 7)
+    if name in ("recording", "stop"):
+        if name == "recording":
+            draw.ellipse((x + 2, y + 2, x2 - 2, y2 - 2), outline=fill, fill=fill)
+        else:
+            draw.rectangle((x + 2, y + 2, x2 - 2, y2 - 2), outline=fill, fill=fill)
+    elif name in ("heart", "session"):
+        draw.polygon([(mid_x, y2 - 1), (x + 1, y + s // 2), (x + 2, y + 2),
+                      (mid_x, y + 4), (x2 - 2, y + 2), (x2 - 1, y + s // 2)], fill=fill)
+    elif name == "services":
+        for yy in (y + 2, y + s // 2, y2 - 2):
+            draw.rectangle((x + 2, yy, x2 - 2, yy + width), fill=fill)
+    elif name == "receiver":
+        draw.rectangle((x + 2, y + 4, x2 - 2, y2 - 2), outline=fill)
+        draw.line((x + 4, y + 2, x + 4, y + 4), fill=fill)
+        draw.line((x2 - 4, y + 2, x2 - 4, y + 4), fill=fill)
+        draw.line((x + 4, mid_y, x + 6, mid_y - 2, x + 8, mid_y + 2, x2 - 3, mid_y - 2), fill=fill)
+    elif name == "ai":
+        draw.rectangle((x + 2, y + 2, x2 - 2, y2 - 2), outline=fill)
+        for px, py in ((x + 4, y + 4), (x2 - 4, y + 4), (mid_x, y2 - 4)):
+            draw.ellipse((px - 1, py - 1, px + 1, py + 1), fill=fill)
+    elif name == "mqtt":
+        draw.arc((x + 1, y + 2, x2 - 1, y2 + 4), 200, 340, fill=fill)
+        draw.arc((x + 3, y + 4, x2 - 3, y2 + 1), 200, 340, fill=fill)
+        draw.ellipse((mid_x - 1, mid_y - 1, mid_x + 1, mid_y + 1), fill=fill)
+    elif name == "acquisition":
+        draw.line((x, mid_y, x + 2, mid_y, x + 4, y + 3, x + 6, y2 - 2,
+                   x + 8, y + 5, x + 10, mid_y, x2, mid_y), fill=fill, width=width)
+    elif name == "network":
+        for inset in (0, 3, 6):
+            draw.arc((x + inset, y + inset, x2 - inset, y2 - inset), 205, 335, fill=fill)
+        draw.ellipse((mid_x - 1, y2 - 3, mid_x + 1, y2 - 1), fill=fill)
+    elif name == "pi":
+        draw.ellipse((x + 3, y + 1, x2 - 3, y2 - 2), outline=fill)
+        for px, py in ((x + 1, y + 3), (x2 - 1, y + 3), (x + 1, y2 - 3), (x2 - 1, y2 - 3)):
+            draw.line((mid_x, mid_y, px, py), fill=fill)
+        draw.ellipse((mid_x - 1, mid_y - 1, mid_x + 1, mid_y + 1), fill=fill)
+    elif name == "storage":
+        draw.rectangle((x + 2, y + 1, x2 - 2, y2 - 1), outline=fill)
+        draw.rectangle((x + 4, y + 3, x2 - 4, y + 5), fill=fill)
+        draw.line((x + 3, y2 - 4, x2 - 3, y2 - 4), fill=fill)
+    elif name in ("display", "settings"):
+        if name == "display":
+            draw.rectangle((x + 1, y + 2, x2 - 1, y2 - 3), outline=fill)
+            draw.line((x + 4, y2 - 1, x2 - 4, y2 - 1), fill=fill)
+        else:
+            draw.ellipse((x + 3, y + 3, x2 - 3, y2 - 3), outline=fill)
+            for px, py in ((mid_x, y + 1), (mid_x, y2 - 1), (x + 1, mid_y), (x2 - 1, mid_y)):
+                draw.line((mid_x, mid_y, px, py), fill=fill)
+    elif name in ("reboot", "back"):
+        draw.arc((x + 2, y + 2, x2 - 1, y2 - 1), 45, 315, fill=fill)
+        draw.polygon([(x + 1, y + 4), (x + 6, y + 3), (x + 4, y + 8)], fill=fill)
+    elif name == "shutdown":
+        draw.arc((x + 2, y + 2, x2 - 2, y2 - 1), 35, 325, fill=fill)
+        draw.line((mid_x, y, mid_x, mid_y), fill=fill, width=width)
+    elif name in ("warning", "error"):
+        draw.polygon([(mid_x, y + 1), (x2 - 1, y2 - 1), (x + 1, y2 - 1)], outline=fill)
+        draw.line((mid_x, y + 4, mid_x, y2 - 5), fill=fill, width=width)
+        draw.point((mid_x, y2 - 3), fill=fill)
+    elif name == "success":
+        draw.ellipse((x + 1, y + 1, x2 - 1, y2 - 1), outline=fill)
+        draw.line((x + 3, mid_y, x + 5, y2 - 4, x2 - 3, y + 3), fill=fill, width=width)
+    else:
+        draw.rectangle((x + 2, y + 2, x2 - 2, y2 - 2), outline=fill)
+
+
+def draw_status_badge(draw, label: str, x_right: int, y: int, font) -> int:
+    text = truncate_text(draw, label, font, 38)
+    width = _text_width(draw, text, font) + 8
+    x = x_right - width
+    _rounded_rectangle(draw, (x, y, x_right, y + 10), 2, fill=255, outline=255)
+    draw.text((x + 4, y + 1), text, font=font, fill=0)
+    return x
+
+
+def draw_header(draw, title: str, badge: str, fonts, icon: str = "heart") -> None:
+    small, _large = fonts
+    draw_icon(draw, icon, OLED_MARGIN, 1, 9)
+    badge_x = draw_status_badge(draw, badge, OLED_WIDTH - OLED_MARGIN, 1, small)
+    draw.text((15, 2), truncate_text(draw, title, small, max(12, badge_x - 18)), font=small, fill=255)
+    draw.line((OLED_MARGIN, 12, OLED_WIDTH - OLED_MARGIN, 12), fill=255)
+
+
+def draw_progress_bar(draw, x: int, y: int, width: int, value: Optional[float], label: str, font) -> None:
+    draw.rectangle((x, y, x + width, y + 6), outline=255)
+    if value is not None:
+        fill_w = max(0, min(width - 2, round((width - 2) * value / 100.0)))
+        if fill_w:
+            draw.rectangle((x + 1, y + 1, x + fill_w, y + 5), fill=255)
+    draw.text((x + width + 3, y - 2), truncate_text(draw, label, font, OLED_WIDTH - x - width - 6), font=font, fill=255)
+
+
+def draw_scrollbar(draw, item_count: int, selected: int, top: int = 16, bottom: int = 59) -> None:
+    height = bottom - top
+    draw.rectangle((122, top, 124, bottom), outline=255)
+    if item_count <= 1:
+        thumb_h, thumb_y = height - 2, top + 1
+    else:
+        thumb_h = max(6, round((height - 2) / item_count))
+        thumb_y = top + 1 + round((height - 2 - thumb_h) * selected / (item_count - 1))
+    draw.rectangle((123, thumb_y, 123, thumb_y + thumb_h), fill=255)
+
+
+def _item_icon(item: MenuItem) -> str:
+    lookup = {
+        "Recording": "recording", "Services": "services", "Status": "acquisition", "Display": "display", "System": "settings", "Back": "back",
+        "Start New Session": "recording", "Stop Recording": "stop", "Session Info": "session", "Receiver Status": "receiver", "Restart Receiver": "receiver",
+        "AI Worker Status": "ai", "MQTT Status": "mqtt", "Restart MQTT": "mqtt", "Acquisition": "acquisition", "Network": "network",
+        "Raspberry Pi": "pi", "Storage": "storage", "Brightness": "display", "Screen Timeout": "display", "Animations": "display",
+        "Invert Display": "display", "Reboot": "reboot", "Shutdown": "shutdown",
+    }
+    return lookup.get(item.label, "settings")
+
+
+def draw_menu_card(draw, item: MenuItem, selected: bool, y: int, fonts, x_offset: int = 0, compact: bool = False) -> None:
+    small, large = fonts
+    x = OLED_MARGIN + x_offset
+    right = 119 + x_offset
+    height = 21 if selected and not compact else 11
+    if selected:
+        _rounded_rectangle(draw, (x, y, right, y + height), 2, fill=255, outline=255)
+        fill, font = 0, (large if not compact else small)
+    else:
+        fill, font = 255, small
+    icon_size = 12 if selected and not compact else 9
+    draw_icon(draw, _item_icon(item), x + 4, y + max(1, (height - icon_size) // 2), icon_size, fill)
+    text_x = x + 19
+    draw.text((text_x, y + max(1, (height - 9) // 2)), truncate_text(draw, item.label, font, right - text_x - 10), font=font, fill=fill)
+    if selected:
+        draw.polygon([(right - 6, y + height // 2 - 3), (right - 3, y + height // 2), (right - 6, y + height // 2 + 3)], fill=fill)
+
+
+def draw_menu(draw, menu: MenuController, fonts, now: float) -> None:
+    items = MENUS[menu.current_menu]
+    title = "MAIN MENU" if menu.current_menu == "main" else menu.current_menu.upper()
+    draw_header(draw, title, f"{menu.selected + 1}/{len(items)}", fonts, "services")
+    offset = menu.animation_offset(now)
+    if menu.selected > 0:
+        draw_menu_card(draw, items[menu.selected - 1], False, 14, fonts, x_offset=offset, compact=True)
+    draw_menu_card(draw, items[menu.selected], True, 25, fonts, x_offset=offset)
+    if menu.selected + 1 < len(items):
+        draw_menu_card(draw, items[menu.selected + 1], False, 49, fonts, x_offset=offset, compact=True)
+    draw_scrollbar(draw, len(items), menu.selected)
+
+
+def draw_confirmation(draw, prompt: str, selected: int, fonts, hold: bool = False) -> None:
+    small, large = fonts
+    draw_header(draw, "CONFIRM", "HOLD" if hold else "CHECK", fonts, "warning")
+    draw_icon(draw, "warning", 8, 19, 16)
+    draw.text((29, 21), truncate_text(draw, prompt, large, 92), font=large, fill=255)
+    if hold:
+        _rounded_rectangle(draw, (14, 41, 113, 55), 2, outline=255)
+        draw.text((26, 44), "HOLD TO CONFIRM", font=small, fill=255)
+        return
+    for index, label in enumerate(("NO", "YES")):
+        x = 28 + index * 40
+        if selected == index:
+            _rounded_rectangle(draw, (x - 6, 42, x + 26, 56), 2, fill=255)
+            fill = 0
+        else:
+            draw.rectangle((x - 6, 42, x + 26, 56), outline=255)
+            fill = 255
+        draw.text((x + 2, 45), label, font=small, fill=fill)
+
+
+def draw_toast(draw, title: str, lines: list[str], fonts) -> None:
+    small, large = fonts
+    success = title not in ("SERVICE ERROR", "ERROR")
+    draw_header(draw, "ECGRHYTHMIA", "DONE" if success else "ERROR", fonts, "heart")
+    _rounded_rectangle(draw, (5, 18, 122, 57), 3, outline=255)
+    draw_icon(draw, "success" if success else "error", 11, 29, 16)
+    draw.text((34, 23), truncate_text(draw, title, large, 80), font=large, fill=255)
+    for index, line in enumerate(lines[:2]):
+        draw.text((34, 39 + index * 9), truncate_text(draw, line, small, 80), font=small, fill=255)
+
+
+def draw_main_screen(draw, snap: StatusSnapshot, fonts, now: float) -> None:
+    small, large = fonts
+    state = "REC" if snap.state == "RECORDING" else "WAIT" if snap.state == "WAITING FRAME" else snap.state
+    draw_header(draw, "ECG", state, fonts, "heart")
+    if snap.error_code:
+        draw_icon(draw, "error", 7, 22, 19)
+        draw.text((31, 19), f"ERROR {snap.error_code}", font=large, fill=255)
+        draw.text((31, 35), truncate_text(draw, snap.error_cause, small, 89), font=small, fill=255)
+        draw.text((7, 53), "PRESS: MENU", font=small, fill=255)
+        return
+    if snap.state == "RECORDING":
+        _rounded_rectangle(draw, (6, 17, 121, 42), 3, outline=255)
+        draw_icon(draw, "recording", 12, 24, 11)
+        draw.text((30, 20), _fmt_mmss(snap.rec_seconds), font=large, fill=255)
+        draw.text((30, 33), f"FRAME {_fmt_frame(snap.frame_index)}", font=small, fill=255)
+        pulse = 36 + int(4 * (1 + math.sin(now * 8)))
+        draw_progress_bar(draw, 7, 49, pulse, 100, f"MQTT {snap.mqtt}", small)
+        return
+    if snap.state == "WAITING FRAME":
+        draw_icon(draw, "acquisition", 8, 22, 21)
+        draw.text((34, 20), "WAITING FRAME", font=large, fill=255)
+        draw.text((34, 36), f"RECEIVER {snap.receiver}", font=small, fill=255)
+    else:
+        draw_icon(draw, "heart", 8, 22, 21)
+        draw.text((35, 21), "READY", font=large, fill=255)
+        draw.text((35, 36), f"LAST {_fmt_frame(snap.frame_index)}", font=small, fill=255)
+    draw.text((37, 53), "PRESS MENU", font=small, fill=255)
+
+
+def draw_detail(draw, kind: str, snap: StatusSnapshot, services, fonts) -> None:
+    small, large = fonts
+    service_data = {
+        "receiver_status": ("RECEIVER", "receiver", RECEIVER_SERVICE, snap.receiver),
+        "ai_status": ("AI WORKER", "ai", AI_SERVICE, snap.ai),
+        "mqtt_status": ("MQTT", "mqtt", MQTT_SERVICE, snap.mqtt),
+    }
+    if kind in service_data:
+        title, icon, service, fallback = service_data[kind]
+        status = services.status(service) if services else fallback
+        draw_header(draw, title, status, fonts, icon)
+        draw_icon(draw, icon, 12, 22, 22)
+        draw.text((42, 25), "SERVICE", font=small, fill=255)
+        draw.text((42, 37), truncate_text(draw, status, large, 72), font=large, fill=255)
+        return
+    detail = "storage" if kind == "session_info" else kind
+    if detail == "acquisition":
+        draw_header(draw, "ACQUISITION", snap.receiver, fonts, "acquisition")
+        draw_icon(draw, "acquisition", 7, 19, 17)
+        draw.text((29, 18), truncate_text(draw, snap.out_rate, large, 62), font=large, fill=255)
+        draw.text((29, 34), f"FRAME {_fmt_frame(snap.frame_index)}", font=small, fill=255)
+        draw.text((7, 51), f"LOSS {_fmt_int(snap.loss)}  CRC {_fmt_int(snap.crc_errors)}", font=small, fill=255)
+    elif detail == "network":
+        draw_header(draw, "NETWORK", snap.mqtt, fonts, "network")
+        draw_icon(draw, "network", 7, 20, 18)
+        draw.text((31, 19), truncate_text(draw, snap.ip_address, large, 89), font=large, fill=255)
+        draw.text((31, 37), f"MQTT {snap.mqtt}", font=small, fill=255)
+        draw.text((31, 49), f"NET {snap.net}", font=small, fill=255)
+    elif detail == "pi":
+        temp = f"{snap.temp_c:.0f}C" if snap.temp_c is not None else NA
+        draw_header(draw, "RASPBERRY PI", temp, fonts, "pi")
+        draw_icon(draw, "pi", 7, 20, 18)
+        draw.text((31, 19), f"UP {_fmt_hms(snap.uptime_seconds)}", font=large, fill=255)
+        label = f"DISK {snap.disk_pct:.0f}%" if snap.disk_pct is not None else "DISK N/A"
+        draw_progress_bar(draw, 7, 47, 78, snap.disk_pct, label, small)
+    else:
+        label = snap.session_id[-16:] if snap.session_id != NA else NA
+        draw_header(draw, "STORAGE", "DATA", fonts, "storage")
+        draw_icon(draw, "storage", 7, 20, 18)
+        draw.text((31, 19), truncate_text(draw, label, small, 90), font=small, fill=255)
+        draw.text((31, 32), f"FRAMES {snap.frame_count}", font=large, fill=255)
+        draw.text((31, 47), f"SIZE {_fmt_bytes(snap.session_size_bytes)}", font=small, fill=255)
+
+
+def draw_adjust(draw, menu: MenuController, fonts) -> None:
+    items = [MenuItem(label) for label, _value in menu.adjust_options]
+    draw_header(draw, menu.adjust_kind.upper(), "SET", fonts, "display")
+    for index, item in enumerate(items):
+        draw_menu_card(draw, item, index == menu.adjust_selected, 17 + index * 11, fonts, compact=True)
+    draw_scrollbar(draw, len(items), menu.adjust_selected)
+
+
+def draw_greeting(draw, fonts) -> None:
+    small, large = fonts
+    _rounded_rectangle(draw, (3, 3, 124, 60), 3, outline=255)
+    draw_icon(draw, "heart", 12, 19, 24)
+    draw.text((43, 20), "ECGRHYTHMIA", font=small, fill=255)
+    draw.text((43, 32), "EDGE AI ECG", font=large, fill=255)
+    draw.text((43, 48), "STARTING...", font=small, fill=255)
+
+
+def draw_screen(draw, snap: StatusSnapshot, menu: MenuController, fonts, now: float, greeting: bool = False) -> None:
+    draw.rectangle((0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1), fill=0)
+    if greeting:
+        draw_greeting(draw, fonts)
+    elif menu.mode == "status":
+        draw_main_screen(draw, snap, fonts, now)
+    elif menu.mode == "menu":
+        draw_menu(draw, menu, fonts, now)
+    elif menu.mode == "confirm":
+        draw_confirmation(draw, menu.confirm_prompt, menu.confirm_selected, fonts)
+    elif menu.mode == "hold_confirm":
+        draw_confirmation(draw, menu.hold_action.upper(), 0, fonts, hold=True)
+    elif menu.mode == "adjust":
+        draw_adjust(draw, menu, fonts)
+    elif menu.mode == "detail":
+        draw_detail(draw, menu.detail_kind, snap, menu.service_manager, fonts)
+    elif menu.mode == "message":
+        draw_toast(draw, menu.message_title, menu.message_lines, fonts)
+    else:
+        draw_main_screen(draw, snap, fonts, now)
+
+
+# ==========================================================================
 # OLED backend
 # ==========================================================================
 class OledRenderer:
@@ -1325,7 +1692,7 @@ class OledRenderer:
         serial_iface = i2c(port=args.i2c_bus, address=args.address)
         driver_cls = getattr(oled_device, args.driver)
         self.device = driver_cls(serial_iface)
-        self.font = ImageFont.load_default()
+        self.fonts = load_ui_fonts(ImageFont)
         self.blank = False
         self.apply_settings(settings)
 
@@ -1346,15 +1713,87 @@ class OledRenderer:
             pass
         self.blank = True
 
-    def render_lines(self, lines: list[str]) -> None:
+    def render_screen(
+        self,
+        snap: StatusSnapshot,
+        menu: MenuController,
+        now: float,
+        greeting: bool = False,
+    ) -> None:
         from luma.core.render import canvas  # type: ignore
 
         with canvas(self.device) as draw:
-            y = 0
-            for line in lines[:5]:
-                draw.text((0, y), line[:OLED_TEXT_CHARS], font=self.font, fill=255)
-                y += 12
+            draw_screen(draw, snap, menu, self.fonts, now, greeting)
         self.blank = False
+
+
+def load_ui_fonts(image_font):
+    """Use installed fonts only; the default bitmap font remains a safe fallback."""
+    candidates = (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    )
+    for path in candidates:
+        try:
+            return image_font.truetype(path, 9), image_font.truetype(path, 13)
+        except OSError:
+            continue
+    fallback = image_font.load_default()
+    return fallback, fallback
+
+
+def save_preview_frames(preview_dir: Path) -> list[Path]:
+    """Render representative screens to PNG without I2C, GPIO, or service actions."""
+    from PIL import Image, ImageDraw, ImageFont  # type: ignore
+
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    fonts = load_ui_fonts(ImageFont)
+    services = SystemServiceManager()
+    menu = MenuController(SessionController(services), OledSettings(), services)
+    base = StatusSnapshot(
+        state="READY",
+        frame_index=15,
+        receiver="OFF",
+        mqtt="STOPPED",
+        ai="STOPPED",
+        out_rate="250 Hz",
+        ip_address="192.168.1.42",
+        temp_c=48.0,
+        disk_pct=37.0,
+        uptime_seconds=3723,
+        session_id="session_20260724_110355",
+        frame_count=15,
+        session_size_bytes=1_572_864,
+    )
+    screens: list[tuple[str, StatusSnapshot, str, str, int]] = []
+    screens.append(("01_ready", base, "status", "", 0))
+    recording = StatusSnapshot(**{**base.__dict__, "state": "RECORDING", "receiver": "ON", "mqtt": "RUNNING", "rec_seconds": 150})
+    screens.append(("02_recording", recording, "status", "", 0))
+    error = StatusSnapshot(**{**base.__dict__, "state": "ERROR", "error_code": "E03", "error_cause": "NO NEW FRAME"})
+    screens.append(("03_error", error, "status", "", 0))
+    screens.extend([
+        ("04_main_menu", base, "menu", "main", 0),
+        ("05_recording_menu", base, "menu", "recording", 0),
+        ("06_status_menu", base, "menu", "status", 1),
+        ("07_confirmation", base, "confirm", "", 0),
+        ("08_toast_success", base, "message", "", 0),
+    ])
+    written: list[Path] = []
+    for name, snap, mode, menu_name, selected in screens:
+        menu.mode = mode
+        menu.selected = selected
+        menu.menu_stack = [menu_name or "main"]
+        if mode == "confirm":
+            menu.confirm("START SESSION?", "start")
+        elif mode == "message":
+            menu.message_title = "RECORDING"
+            menu.message_lines = ["RECEIVER OK", "MQTT CONNECTED"]
+        image = Image.new("1", (OLED_WIDTH, OLED_HEIGHT), 0)
+        draw_screen(ImageDraw.Draw(image), snap, menu, fonts, now=1.0)
+        output = preview_dir / f"{name}.png"
+        image.save(output)
+        written.append(output)
+    return written
 
 
 # ==========================================================================
@@ -1404,6 +1843,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--console", action="store_true")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--preview-dir", type=Path, default=None)
     parser.add_argument("--no-gpio", action="store_true")
     parser.add_argument("--reverse-encoder", action="store_true")
     parser.add_argument("--encoder-a-gpio", type=int, default=ENCODER_A_GPIO)
@@ -1496,8 +1936,9 @@ def run(args) -> int:
                 settings.brightness,
                 settings.invert,
                 settings.timeout_seconds,
+                settings.animations,
             )
-            should_render = event_seen or render_key != last_render_key
+            should_render = event_seen or render_key != last_render_key or menu.animation_active(now_mono)
             if args.console:
                 if should_render:
                     sys.stdout.write("\n" + render_console(lines) + "\n")
@@ -1514,7 +1955,7 @@ def run(args) -> int:
                         should_render = False
                 else:
                     if should_render or renderer.blank:
-                        renderer.render_lines(lines)
+                        renderer.render_screen(snap, menu, now_mono, greeting=show_greeting)
 
             last_render_key = render_key
             if args.once:
@@ -1537,6 +1978,10 @@ def main(argv=None) -> int:
     assert_safe_source()
     if args.self_test:
         return _self_test()
+    if args.preview_dir is not None:
+        written = save_preview_frames(args.preview_dir)
+        print(f"Saved {len(written)} OLED previews to {args.preview_dir}")
+        return 0
     return run(args)
 
 
