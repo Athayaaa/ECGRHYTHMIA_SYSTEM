@@ -363,6 +363,9 @@ class PixelUiTests(TestCase):
         self.menu.open_menu()
         image = self.render()
         self.assertGreater(sum(image.getdata()), 0)
+        self.menu.menu_stack = ["status"]
+        self.menu.selected = 1
+        self.assertGreater(sum(self.render().getdata()), 0)
         draw = self.ImageDraw.Draw(image)
         label = oled_status.truncate_text(draw, "A very long service label", self.fonts[0], 28)
         self.assertLessEqual(oled_status._text_width(draw, label, self.fonts[0]), 28)

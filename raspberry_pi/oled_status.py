@@ -1421,7 +1421,7 @@ def draw_icon(draw, name: str, x: int, y: int, size: int = 12, fill: int = 255) 
         draw.line((x, mid_y, x + 2, mid_y, x + 4, y + 3, x + 6, y2 - 2,
                    x + 8, y + 5, x + 10, mid_y, x2, mid_y), fill=fill, width=width)
     elif name == "network":
-        for inset in (0, 3, 6):
+        for inset in (0, 2, 4):
             draw.arc((x + inset, y + inset, x2 - inset, y2 - inset), 205, 335, fill=fill)
         draw.ellipse((mid_x - 1, y2 - 3, mid_x + 1, y2 - 1), fill=fill)
     elif name == "pi":
