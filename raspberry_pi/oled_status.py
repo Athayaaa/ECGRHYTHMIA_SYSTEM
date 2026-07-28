@@ -726,7 +726,13 @@ class SessionController:
             ("MQTT", MQTT_SERVICE),
         ]
         for label, service in start_order:
-            result = self.services.start(service)
+            # AI and MQTT may have been started manually for diagnostics. They
+            # must be restarted to consume the newly-written session env file.
+            result = (
+                self.services.restart(service)
+                if self.services.is_active(service)
+                else self.services.start(service)
+            )
             if not result.ok:
                 try:
                     finish_recording_session(paths, 0, status="FAILED")

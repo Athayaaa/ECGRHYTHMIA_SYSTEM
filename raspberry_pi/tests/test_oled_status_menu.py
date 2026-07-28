@@ -192,6 +192,28 @@ class SessionControllerTests(TestCase):
             self.assertFalse(result.ok)
             self.assertEqual(services.calls, [])
 
+    def test_start_restarts_active_ai_and_mqtt_for_new_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            services = FakeServices()
+            services.active.update({oled_status.AI_SERVICE, oled_status.MQTT_SERVICE})
+            controller = oled_status.SessionController(
+                services,
+                session_root=Path(td) / "sessions",
+                env_path=Path(td) / "current.env",
+            )
+
+            result = controller.start_new_session()
+
+            self.assertTrue(result.ok)
+            self.assertEqual(
+                services.calls,
+                [
+                    ("start", oled_status.RECEIVER_SERVICE),
+                    ("restart", oled_status.AI_SERVICE),
+                    ("restart", oled_status.MQTT_SERVICE),
+                ],
+            )
+
     def test_stop_order_and_session_kept(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
