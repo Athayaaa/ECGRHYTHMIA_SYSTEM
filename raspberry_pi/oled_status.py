@@ -1658,12 +1658,25 @@ def draw_greeting(draw, fonts) -> None:
     draw.text((43, 48), "STARTING...", font=small, fill=255)
 
 
-def draw_screen(draw, snap: StatusSnapshot, menu: MenuController, fonts, now: float, greeting: bool = False) -> None:
+def draw_screen(
+    draw,
+    snap: StatusSnapshot,
+    menu: MenuController,
+    fonts,
+    now: float,
+    greeting: bool = False,
+    status_page: int = 0,
+) -> None:
     draw.rectangle((0, 0, OLED_WIDTH - 1, OLED_HEIGHT - 1), fill=0)
     if greeting:
         draw_greeting(draw, fonts)
     elif menu.mode == "status":
-        draw_main_screen(draw, snap, fonts, now)
+        if status_page == 1:
+            draw_detail(draw, "acquisition", snap, None, fonts)
+        elif status_page == 2:
+            draw_detail(draw, "pi", snap, None, fonts)
+        else:
+            draw_main_screen(draw, snap, fonts, now)
     elif menu.mode == "menu":
         draw_menu(draw, menu, fonts, now)
     elif menu.mode == "confirm":
@@ -1719,11 +1732,12 @@ class OledRenderer:
         menu: MenuController,
         now: float,
         greeting: bool = False,
+        status_page: int = 0,
     ) -> None:
         from luma.core.render import canvas  # type: ignore
 
         with canvas(self.device) as draw:
-            draw_screen(draw, snap, menu, self.fonts, now, greeting)
+            draw_screen(draw, snap, menu, self.fonts, now, greeting, status_page)
         self.blank = False
 
 
@@ -1921,12 +1935,13 @@ def run(args) -> int:
                 and args.greeting_seconds > 0
                 and now_mono - start < args.greeting_seconds
             )
+            status_page = 0
             if show_greeting:
                 lines = render_greeting_lines()
             elif menu.mode == "status" and not snap.error_code:
                 elapsed = now_mono - start
-                page = int(elapsed / max(0.5, args.page_seconds)) % 3
-                lines = render_page_lines(snap, page)
+                status_page = int(elapsed / max(0.5, args.page_seconds)) % 3
+                lines = render_page_lines(snap, status_page)
             else:
                 lines = menu.render(snap)
 
@@ -1955,7 +1970,13 @@ def run(args) -> int:
                         should_render = False
                 else:
                     if should_render or renderer.blank:
-                        renderer.render_screen(snap, menu, now_mono, greeting=show_greeting)
+                        renderer.render_screen(
+                            snap,
+                            menu,
+                            now_mono,
+                            greeting=show_greeting,
+                            status_page=status_page,
+                        )
 
             last_render_key = render_key
             if args.once:

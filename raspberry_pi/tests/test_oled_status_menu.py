@@ -334,7 +334,7 @@ class PixelUiTests(TestCase):
             session_size_bytes=1_572_864,
         )
 
-    def render(self):
+    def render(self, status_page=0):
         image = self.Image.new("1", (oled_status.OLED_WIDTH, oled_status.OLED_HEIGHT), 0)
         oled_status.draw_screen(
             self.ImageDraw.Draw(image),
@@ -342,6 +342,7 @@ class PixelUiTests(TestCase):
             self.menu,
             self.fonts,
             now=1.0,
+            status_page=status_page,
         )
         return image
 
@@ -396,6 +397,14 @@ class PixelUiTests(TestCase):
 
         self.menu.show_message("RECORDING", ["RECEIVER OK", "MQTT CONNECTED"])
         self.assertGreater(sum(self.render().getdata()), 0)
+
+    def test_idle_slideshow_renders_home_acquisition_and_pi(self):
+        self.menu.mode = "status"
+        home = self.render(status_page=0)
+        acquisition = self.render(status_page=1)
+        pi = self.render(status_page=2)
+        self.assertNotEqual(home.tobytes(), acquisition.tobytes())
+        self.assertNotEqual(acquisition.tobytes(), pi.tobytes())
 
     def test_animation_setting_never_blocks_menu_input(self):
         self.menu.open_menu()
