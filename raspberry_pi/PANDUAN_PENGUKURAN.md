@@ -59,7 +59,8 @@ Data yang dikirim ke MQTT adalah **full ECG mV per frame**:
 | Unit | `mV` |
 | Channel order | `Lead I`, `Lead II`, `Lead III` |
 | Base topic | `ecgrhythmia/device01` |
-| Topic JSON | `ecgrhythmia/device01/frame/json` |
+| Topic JSON default | `ecgrhythmia/device01/frame/json` |
+| Topic JSON exact | `ecgrhythmia/device01` saat `MQTT_JSON_TOPIC_EXACT=1` |
 | Topic NPY ECG | `ecgrhythmia/device01/frame/npy` |
 | Topic NPY prediction | `ecgrhythmia/device01/prediction` |
 
@@ -103,7 +104,8 @@ publisher.
 | TLS | Aktif / wajib |
 | Username | `ecg-undip` |
 | Base topic publish | `ecgrhythmia/device01` |
-| Topic JSON | `ecgrhythmia/device01/frame/json` |
+| Topic JSON default | `ecgrhythmia/device01/frame/json` |
+| Topic JSON exact | `ecgrhythmia/device01` saat `MQTT_JSON_TOPIC_EXACT=1` |
 | Topic NPY ECG | `ecgrhythmia/device01/frame/npy` |
 | Topic NPY prediction | `ecgrhythmia/device01/prediction` |
 | QoS | `1` |
@@ -254,6 +256,13 @@ utama:
 
 Terminal OLED bersifat opsional.
 
+### Mode Laptop Tanpa OLED
+
+Jika ESP32 terhubung langsung ke laptop, gunakan tiga terminal di bawah dengan
+port serial laptop, biasanya `/dev/ttyACM0`. OLED dan `systemctl --user` tidak
+diperlukan. Setelah receiver membuat sesi, salin nilai `Output` yang dicetak
+ke variabel `SESSION_DIR` pada terminal AI dan MQTT.
+
 ### Terminal 1: Menjalankan Receiver & GUI
 Proses ini akan membaca data sensor dari ESP32, menyimpannya, dan secara otomatis membuka aplikasi GUI ECG Viewer.
 
@@ -328,6 +337,7 @@ python3 mqtt_publisher.py \
   --topic ecgrhythmia/device01 \
   --device-id device01 \
   --payload-format json \
+  --json-topic-exact \
   --stress-test \
   --username ecg-undip \
   --password-env HIVEMQ_PASSWORD \
@@ -352,7 +362,7 @@ Format: JSON
 Frame 000001 telemetry: CPU 41.2%, RAM 36.7%, TEMP 56.9 C
 Frame 000001 network: MQTT connected, LAT N/A ms, RSSI -59 dBm
 Frame 000001 stress test: enabled
-Topic: ecgrhythmia/device01/frame/json
+Topic: ecgrhythmia/device01
 Payload size: 164613 bytes
 Frame 000001 published, QoS 1
 ```
@@ -444,6 +454,7 @@ Pastikan tim dashboard web menggunakan konfigurasi berikut:
 | Username | `ecg-undip` |
 | Subscribe semua device01 | `ecgrhythmia/device01/#` |
 | JSON ECG + prediction | `ecgrhythmia/device01/frame/json` |
+| JSON exact-topic opsional | `ecgrhythmia/device01` |
 | NPY ECG binary | `ecgrhythmia/device01/frame/npy` |
 | NPY prediction JSON | `ecgrhythmia/device01/prediction` |
 | QoS subscribe | `1` |
@@ -457,10 +468,18 @@ message_id
 ### Format JSON
 
 Jika publisher dijalankan dengan `--payload-format json`, dashboard menerima satu
-payload JSON compact di topic:
+payload JSON compact. Default topic adalah:
 
 ```text
 ecgrhythmia/device01/frame/json
+```
+
+Untuk kompatibilitas website yang hanya mendengarkan topic root perangkat,
+atur `MQTT_JSON_TOPIC_EXACT=1` pada `runtime/mqtt_credentials.env`. Publisher
+kemudian mengirim JSON tepat ke:
+
+```text
+ecgrhythmia/device01
 ```
 
 Payload berisi:
@@ -727,7 +746,8 @@ rm data/predictions_prosim_test/mqtt_publish_state_hivemq.json
 Periksa:
 
 - dashboard subscribe ke `ecgrhythmia/device01/#` atau `ecgrhythmia/#`;
-- untuk JSON, dashboard membaca `ecgrhythmia/device01/frame/json`;
+- untuk JSON, dashboard membaca `ecgrhythmia/device01/frame/json` secara
+  default, atau `ecgrhythmia/device01` bila exact-topic diaktifkan;
 - untuk NPY, dashboard membaca `ecgrhythmia/device01/frame/npy` dan
   `ecgrhythmia/device01/prediction`;
 - dashboard memakai client ID berbeda dari publisher;
