@@ -29,6 +29,8 @@ sampling:
 
 output:
   directory: data
+  calibrated_directory: calibrated
+  filtered_directory: filtered
   raw_csv: raw_ecg.csv
   sqlite_db: ecg_metadata.sqlite
 

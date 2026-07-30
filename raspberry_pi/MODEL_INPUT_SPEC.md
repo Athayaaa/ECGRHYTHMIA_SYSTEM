@@ -29,8 +29,10 @@ frame_xxxxxx_input.npy
 ```
 
 The NPY file stores a contiguous `float32` NumPy array with shape `(2500, 3)`.
-Values remain in physical `mV` units. No z-score, min-max normalization,
-clipping, filtering, resampling, or baseline removal is applied by default.
+Values remain in physical `mV` units. The model-ready preparation step does not
+add z-score, min-max normalization, filtering, resampling, or baseline removal
+by default. When enabled, the 50 Hz notch is applied once earlier to the
+separate `filtered/` source frame.
 
 CSV and JSON files are supporting formats only. CSV is useful for inspection,
 and JSON records provenance, calibration metadata, validation results, and any
@@ -39,12 +41,19 @@ file as the stable input.
 
 ## Provenance
 
-Model-ready frames are derived from calibrated mV frames:
+When `filters.notch_50hz` is enabled, model-ready frames are derived from the
+separate notch-filtered mV copy. Otherwise they are derived from calibrated mV
+frames:
 
 ```text
+data/filtered/frame_xxxxxx_mv.npy
+data/filtered/frame_xxxxxx_mv.json
+
+# notch_50hz disabled fallback
 data/calibrated/frame_xxxxxx_mv.npy
 data/calibrated/frame_xxxxxx_mv.json
 ```
 
 Raw ADC frames remain the preserved acquisition record. Model-ready frames must
-never replace or modify raw ADC exports or calibrated mV source files.
+never replace or modify raw ADC exports, calibrated mV source files, or their
+filtered copies.

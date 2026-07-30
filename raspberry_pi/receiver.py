@@ -19,9 +19,11 @@ from calibration_utils import (
     CalibratedExportPaths,
     convert_raw_to_mv,
     load_calibration_config,
+    notch_50hz_processing,
     write_calibrated_frame,
 )
 from data_preparer import prepare_frame_array
+from ecg_filters import apply_notch_filter
 from ecg_buffer import ECGRingBuffer
 from metadata_store import MetadataStore
 from model_input_utils import DEFAULT_MAX_ABS_MV, prepare_model_input_file
@@ -277,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     if session_paths is not None:
         output_dir = session_paths.raw_adc
         calibrated_output_dir = session_paths.calibrated
+        filtered_output_dir = session_paths.filtered
         model_ready_enabled = True
         model_ready_output_dir = session_paths.model_ready
     elif args.output_dir is not None:
@@ -299,6 +302,9 @@ def main(argv: list[str] | None = None) -> int:
         calibrated_output_dir = Path(output_config.get("calibrated_directory", "calibrated"))
         if not calibrated_output_dir.is_absolute():
             calibrated_output_dir = output_dir / calibrated_output_dir
+        filtered_output_dir = Path(output_config.get("filtered_directory", "filtered"))
+        if not filtered_output_dir.is_absolute():
+            filtered_output_dir = output_dir / filtered_output_dir
         model_ready_enabled = bool(model_ready_config.get("enabled", False))
         model_ready_output_dir = Path(model_ready_config.get("output_dir", "data/model_ready"))
         if not model_ready_output_dir.is_absolute():
@@ -472,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
                                 calibrated_paths = try_export_calibrated_frame(
                                     calibration_config_path=calibration_config_path,
                                     calibrated_output_dir=calibrated_output_dir,
+                                    filtered_output_dir=filtered_output_dir,
                                     raw_export=paths,
                                     samples=samples,
                                     sample_rate_hz=sample_rate_hz,
@@ -618,6 +625,7 @@ def disable_modem_control(serial_port: serial.Serial) -> None:
 def try_export_calibrated_frame(
     calibration_config_path: Path,
     calibrated_output_dir: Path,
+    filtered_output_dir: Path,
     raw_export: FrameExportPaths,
     samples,
     sample_rate_hz: int,
@@ -642,6 +650,31 @@ def try_export_calibrated_frame(
                 "json": str(raw_export.metadata_path),
             },
         )
+        processing = notch_50hz_processing(calibration)
+        if processing is None:
+            filtered_paths = None
+        else:
+            filtered_samples = apply_notch_filter(
+                samples_mv,
+                sample_rate_hz,
+                frequency_hz=float(processing["frequency_hz"]),
+                quality_factor=float(processing["quality_factor"]),
+            )
+            filtered_paths = write_calibrated_frame(
+                output_dir=filtered_output_dir,
+                stem=raw_export.csv_path.stem,
+                samples_mv=filtered_samples,
+                sample_rate_hz=sample_rate_hz,
+                calibration=calibration,
+                source_metadata=raw_export.metadata,
+                source_files={
+                    "csv": str(raw_export.csv_path),
+                    "bin": str(raw_export.bin_path),
+                    "npy": str(raw_export.npy_path),
+                    "json": str(raw_export.metadata_path),
+                },
+                processing={"filters": [processing]},
+            )
     except Exception as error:
         print(f"warning: calibrated mV export skipped: {error}", file=sys.stderr)
         return None
@@ -651,6 +684,13 @@ def try_export_calibrated_frame(
         f"{raw_export.csv_path.stem}: {paths.csv_path}, {paths.npy_path}, "
         f"{paths.json_path}"
     )
+    if filtered_paths is not None:
+        print(
+            "exported filtered frame "
+            f"{raw_export.csv_path.stem}: {filtered_paths.csv_path}, "
+            f"{filtered_paths.npy_path}, {filtered_paths.json_path}"
+        )
+        return filtered_paths
     return paths
 
 

@@ -11,8 +11,9 @@ set -euo pipefail
 : "${MQTT_DEVICE_ID:?MQTT_DEVICE_ID is required}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ECG_DIR="${FILTERED_DIR:-$CALIBRATED_DIR}"
 args=(
-  --ecg-dir "$CALIBRATED_DIR"
+  --ecg-dir "$ECG_DIR"
   --prediction-dir "$PREDICTION_DIR"
   --broker "$MQTT_BROKER"
   --port "$MQTT_PORT"

@@ -28,8 +28,10 @@ from calibration_utils import (
     frame_sort_time,
     load_calibration_config,
     load_raw_frame,
+    notch_50hz_processing,
     write_calibrated_frame,
 )
+from ecg_filters import apply_notch_filter
 from model_input_utils import (
     DEFAULT_MAX_ABS_MV,
     ModelInputError,
@@ -261,6 +263,7 @@ def replay_frame(
     frame: FrameSet,
     calibration: dict[str, Any],
     calibrated_dir: Path,
+    filtered_dir: Path,
     model_ready_dir: Path,
     rejected_dir: Path,
     max_abs_mV: float,
@@ -285,9 +288,28 @@ def replay_frame(
             source_metadata=source_metadata,
             source_files=source_files_for_frame(frame),
         )
+        model_source_paths = calibrated_paths
+        processing = notch_50hz_processing(calibration)
+        if processing is not None:
+            filtered_samples = apply_notch_filter(
+                samples_mv,
+                sample_rate_hz,
+                frequency_hz=float(processing["frequency_hz"]),
+                quality_factor=float(processing["quality_factor"]),
+            )
+            model_source_paths = write_calibrated_frame(
+                output_dir=filtered_dir,
+                stem=frame.stem,
+                samples_mv=filtered_samples,
+                sample_rate_hz=sample_rate_hz,
+                calibration=calibration,
+                source_metadata=source_metadata,
+                source_files=source_files_for_frame(frame),
+                processing={"filters": [processing]},
+            )
 
         validation = validate_model_samples(
-            np.asarray(samples_mv, dtype=np.float32),
+            np.load(model_source_paths.npy_path, allow_pickle=False),
             max_abs_mV=max_abs_mV,
         )
         signal_quality = signal_quality_dict(validation)
@@ -315,8 +337,8 @@ def replay_frame(
             )
 
         prepared = prepare_model_input_file(
-            input_path=calibrated_paths.npy_path,
-            metadata_path=calibrated_paths.json_path,
+            input_path=model_source_paths.npy_path,
+            metadata_path=model_source_paths.json_path,
             output_dir=model_ready_dir,
             max_abs_mV=max_abs_mV,
             overwrite=True,
@@ -400,6 +422,7 @@ def replay_dataset(
         raise CalibrationError(f"no raw frame_*.npy files found in {input_dir}")
 
     calibrated_dir = output_dir / "calibrated"
+    filtered_dir = output_dir / "filtered"
     model_ready_dir = output_dir / "model_ready"
     rejected_dir = output_dir / "rejected"
 
@@ -409,6 +432,7 @@ def replay_dataset(
             frame=frame,
             calibration=calibration,
             calibrated_dir=calibrated_dir,
+            filtered_dir=filtered_dir,
             model_ready_dir=model_ready_dir,
             rejected_dir=rejected_dir,
             max_abs_mV=max_abs_mV,

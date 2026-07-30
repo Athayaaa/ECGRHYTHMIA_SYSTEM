@@ -13,7 +13,7 @@ from typing import Any
 
 SESSION_SCHEMA_VERSION = 1
 SESSION_PREFIX = "session_"
-SESSION_LAYOUT = ("raw_adc", "calibrated", "model_ready", "predictions", "logs")
+SESSION_LAYOUT = ("raw_adc", "calibrated", "filtered", "model_ready", "predictions", "logs")
 DEFAULT_SAMPLE_RATE_HZ = 250.0
 DEFAULT_FRAME_SECONDS = 10.0
 CHANNEL_ORDER = ["Lead I", "Lead II", "Lead III"]
@@ -25,6 +25,7 @@ class SessionPaths:
     root: Path
     raw_adc: Path
     calibrated: Path
+    filtered: Path
     model_ready: Path
     predictions: Path
     logs: Path
@@ -64,6 +65,7 @@ def paths_for_session(root: Path, session_id: str | None = None) -> SessionPaths
         root=root,
         raw_adc=root / "raw_adc",
         calibrated=root / "calibrated",
+        filtered=root / "filtered",
         model_ready=root / "model_ready",
         predictions=root / "predictions",
         logs=root / "logs",
@@ -94,7 +96,14 @@ def create_recording_session(
             suffix += 1
 
     try:
-        for path in (paths.raw_adc, paths.calibrated, paths.model_ready, paths.predictions, paths.logs):
+        for path in (
+            paths.raw_adc,
+            paths.calibrated,
+            paths.filtered,
+            paths.model_ready,
+            paths.predictions,
+            paths.logs,
+        ):
             path.mkdir()
         write_json_atomic(
             paths.metadata_path,

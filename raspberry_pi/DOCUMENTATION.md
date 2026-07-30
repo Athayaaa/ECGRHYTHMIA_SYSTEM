@@ -316,7 +316,8 @@ sesi kedua memakai akhiran `_01`, `_02`, dan seterusnya.
 ```text
 data/sessions/session_DDMMYYYY_HHMMSS/
 ├── raw_adc/       # CSV, BIN, NPY, JSON raw ADC, dan SQLite metadata
-├── calibrated/    # frame ECG dalam mV
+├── calibrated/    # frame ECG dalam mV asli, tanpa notch
+├── filtered/      # salinan mV dengan notch 50 Hz jika diaktifkan
 ├── model_ready/   # input float32 shape (2500, 3) untuk AI
 ├── predictions/   # JSON hasil inferensi AI dan state MQTT
 ├── logs/          # ruang untuk log sesi
@@ -405,6 +406,8 @@ output:
   directory: data             # Folder output
   raw_csv: raw_ecg.csv        # Nama file CSV raw
   sqlite_db: ecg_metadata.sqlite  # Database metadata
+  calibrated_directory: calibrated
+  filtered_directory: filtered
 
 runtime:
   status_interval_seconds: 5  # Interval print status
@@ -434,6 +437,12 @@ Jika kalibrasi aktif, juga menghasilkan file **calibrated (mV)**:
 | `frame_NNNNNN_mv.csv` | CSV: `time,lead_i_mV,lead_ii_mV,lead_iii_mV` | `frame_000001_mv.csv` |
 | `frame_NNNNNN_mv.npy` | NumPy array mV `float32 (2500,3)` | `frame_000001_mv.npy` |
 | `frame_NNNNNN_mv.json` | Metadata kalibrasi | `frame_000001_mv.json` |
+
+Jika `filters.notch_50hz: true` pada `calibration_config.yaml`, receiver juga
+membuat salinan dengan nama file sama di `filtered/`. Salinan itu memakai notch
+50 Hz zero-phase (Q 30 secara default); `calibrated/` tidak diubah. Model-ready
+otomatis memakai `filtered/` saat filter aktif, dan metadata model mencatat
+proses sumber tersebut.
 
 ---
 
@@ -545,6 +554,9 @@ python -m ecg_qt_viewer.main --data-dir data/ --source-mode raw
 # Standalone — calibrated mV mode:
 python -m ecg_qt_viewer.main --data-dir data/calibrated --source-mode mv
 
+# Standalone — mV dengan notch 50 Hz otomatis:
+python -m ecg_qt_viewer.main --data-dir data/filtered --source-mode mv
+
 # Dengan follow-live (ikuti frame terbaru):
 python -m ecg_qt_viewer.main --data-dir data/ --follow-live
 ```
@@ -576,7 +588,8 @@ python -m ecg_qt_viewer.main --data-dir data/ --follow-live
 | Mode | Data Source | Tampilan |
 |---|---|---|
 | **Raw ADC** | `frame_*.npy` | Nilai ADC count mentah |
-| **Calibrated mV** | `frame_*_mv.npy` | Nilai milivolt, clinical ECG grid |
+| **Calibrated mV** | `calibrated/frame_*_mv.npy` | Nilai milivolt asli |
+| **Filtered mV** | `filtered/frame_*_mv.npy` | Salinan mV dengan notch 50 Hz jika aktif |
 
 ---
 
@@ -603,7 +616,8 @@ bermasalah, gunakan GPIO20/pin 38 dengan `--encoder-b-gpio 20`.
 
 Menu Recording membuat session runtime baru di
 `data/sessions/session_DDMMYYYY_HHMMSS/`, lengkap dengan `raw_adc/`,
-`calibrated/`, `model_ready/`, `predictions/`, `logs/`, dan `session.json`.
+`calibrated/`, `filtered/`, `model_ready/`, `predictions/`, `logs/`, dan
+`session.json`.
 OLED menulis `runtime/current_session.env` secara atomic, lalu memulai service
 dalam urutan receiver → AI → MQTT. Saat Stop Recording, urutannya dibalik:
 MQTT → AI → receiver; metadata sesi difinalkan menjadi `STOPPED`. Session dan
@@ -702,7 +716,11 @@ frame_000001.npy (raw ADC count)
         │
         ▼  convert_dataset_to_mv.py  atau  calibration via receiver
         │
-frame_000001_mv.npy (calibrated mV)
+frame_000001_mv.npy (calibrated mV asli)
+        │
+        ├── bila filters.notch_50hz: true
+        ▼
+frame_000001_mv.npy (filtered/; notch 50 Hz zero-phase)
         │
         ▼  prepare_model_input.py  atau  prepare_model_dataset.py
         │
@@ -722,7 +740,7 @@ python3 convert_dataset_to_mv.py \
 
 ```bash
 python3 prepare_model_input.py \
-    --input data/calibrated/frame_000001_mv.npy \
+    --input data/filtered/frame_000001_mv.npy \
     --output-dir data/model_ready
 ```
 
@@ -772,7 +790,7 @@ tidak menjalankan model, dan tidak mengubah file sumber.
 ### Alur MQTT
 
 ```
-data/calibrated/frame_000001_mv.npy
+data/filtered/frame_000001_mv.npy
         +
 data/predictions/frame_000001_prediction.json
         │

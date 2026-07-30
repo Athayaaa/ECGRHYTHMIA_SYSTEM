@@ -25,7 +25,15 @@ class SessionManagerTests(TestCase):
             self.assertEqual(paths.session_id, "session_28072026_153845")
             self.assertEqual(
                 {path.name for path in paths.root.iterdir()},
-                {"raw_adc", "calibrated", "model_ready", "predictions", "logs", "session.json"},
+                {
+                    "raw_adc",
+                    "calibrated",
+                    "filtered",
+                    "model_ready",
+                    "predictions",
+                    "logs",
+                    "session.json",
+                },
             )
             metadata = json.loads(paths.metadata_path.read_text(encoding="utf-8"))
             self.assertEqual(metadata["status"], "RECORDING")

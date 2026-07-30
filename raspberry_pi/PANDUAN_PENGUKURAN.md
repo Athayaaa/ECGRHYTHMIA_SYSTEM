@@ -4,7 +4,16 @@ Panduan ini menjelaskan langkah-langkah untuk melakukan sesi perekaman dan
 pemantauan sinyal ECG secara *real-time* lengkap dengan deteksi aritmia berbasis
 Edge AI dan pengiriman data ke dashboard web melalui MQTT.
 
-Pastikan **ESP32 sudah menyala dan terhubung ke Raspberry Pi melalui USB** sebelum memulai pengukuran.
+> [!CAUTION]
+> Prototipe ini adalah alat pengembangan/riset, bukan perangkat diagnosis atau
+> pengganti penilaian tenaga kesehatan. Jangan gunakan pada orang yang sedang
+> mengalami nyeri dada, sesak, pingsan, atau gejala gawat; cari pertolongan medis
+> segera. Gunakan hanya rangkaian yang beroperasi dengan baterai/power bank dan
+> jangan hubungkan charger atau sumber PLN ketika elektroda menempel pada tubuh.
+
+Pastikan **ESP32 sudah menyala dan terhubung ke Raspberry Pi melalui USB**
+sebelum memulai pengukuran. Untuk pengukuran manusia, kabel dan elektroda harus
+utuh, kering, serta terpasang pada sistem berdaya baterai yang terisolasi.
 
 ---
 
@@ -14,6 +23,7 @@ Pastikan **ESP32 sudah menyala dan terhubung ke Raspberry Pi melalui USB** sebel
 ESP32
   -> receiver.py
   -> data/sessions/session_DDMMYYYY_HHMMSS/calibrated/frame_000001_mv.npy
+  -> data/sessions/session_DDMMYYYY_HHMMSS/filtered/frame_000001_mv.npy
   -> ai_worker.py
   -> data/sessions/session_DDMMYYYY_HHMMSS/predictions/frame_000001_prediction.json
   -> mqtt_publisher.py
@@ -29,7 +39,8 @@ akhiran `_01`, `_02`, dan seterusnya tanpa mengubah sesi yang sudah ada.
 ```text
 data/sessions/session_DDMMYYYY_HHMMSS/
 ├── raw_adc/
-├── calibrated/
+├── calibrated/    # mV hasil kalibrasi asli
+├── filtered/      # salinan mV dengan notch 50 Hz bila aktif
 ├── model_ready/
 ├── predictions/
 ├── logs/
@@ -39,6 +50,106 @@ data/sessions/session_DDMMYYYY_HHMMSS/
 `session.json` memuat ID, waktu mulai/selesai, status, sampling rate, durasi
 frame, channel `Lead I`, `Lead II`, `Lead III`, unit `mV`, dan jumlah frame.
 File ini ditulis atomik saat sesi dibuat dan saat sesi dihentikan.
+
+## Protokol Pengukuran Manusia
+
+Gunakan posisi elektroda yang sama pada setiap sesi untuk subjek yang sama.
+Posisi tubuh, persiapan kulit, dan lokasi elektroda memengaruhi bentuk serta
+amplitudo ECG; perpindahan lokasi dapat mengubah hasil walaupun orangnya sama.
+Panduan ini memakai konfigurasi monitoring 3-lead pada proyek ini, bukan
+pengganti ECG diagnostik 12-lead.
+
+### 1. Persiapan Aman
+
+1. Gunakan ESP32/Raspberry Pi yang dipasok baterai atau power bank. Lepaskan
+   charger laptop/Raspberry Pi/ESP32 sebelum elektroda dipasang ke tubuh.
+2. Periksa kabel lead, konektor, dan elektroda. Jangan gunakan kabel terkelupas,
+   elektroda rusak, atau elektroda yang sudah tidak melekat baik.
+3. Minta subjek duduk atau berbaring santai, diam, dan bernapas normal selama
+   sekitar 5 menit. Jangan berbicara, menyentuh kabel, atau menggerakkan lengan
+   selama perekaman.
+4. Pilih kulit yang bersih, kering, bebas krim/minyak. Bersihkan dengan alcohol
+   swab, tunggu hingga kering, dan rapikan rambut bila menghambat perekat.
+   Gunakan elektroda baru untuk setiap sesi atau bila perekat mulai longgar.
+
+Persiapan kulit seperti pembersihan dan abrasi ringan yang sesuai dapat
+mengurangi noise; perubahan posisi pasien juga dapat mengubah amplitudo ECG.
+Rujukan: [AHA/ACC/HRS ECG technology statement](https://www.jacc.org/doi/10.1016/j.jacc.2007.01.024)
+dan [AHA cardiac event-recorder guidance](https://www.heart.org/en/health-topics/arrhythmia/symptoms-diagnosis--monitoring-of-arrhythmia/cardiac-event-recorder).
+
+### 2. Pemasangan Lead Proyek
+
+Selalu ikuti label **RA, LA, LL, RLD/RL** pada kabel/breakout, bukan warna kabel,
+karena warna dapat berbeda antar perangkat.
+
+| Label | Lokasi torso untuk monitoring yang konsisten | Fungsi di proyek |
+|---|---|---|
+| `RA` | Dada kanan atas, sedikit di bawah klavikula kanan | Referensi negatif Lead I dan II |
+| `LA` | Dada kiri atas, sedikit di bawah klavikula kiri | Positif Lead I |
+| `LL` | Perut kiri bawah, di atas area tulang panggul | Positif Lead II |
+| `RLD` / `RL` | Perut kanan bawah, simetris dengan LL | Right-leg drive/referensi; bukan channel data |
+
+Firmware memetakan **Lead I = LA - RA**, **Lead II = LL - RA**, dan menghitung
+**Lead III = Lead II - Lead I**. Tempelkan keempat elektroda pada kulit, tekan
+keliling perekatnya, buat kabel tidak tertarik, dan jangan menyilangkan atau
+membiarkan kabel bergerak bebas. Penempatan torso membantu mengurangi artefak
+gerakan untuk monitoring, tetapi bentuknya tidak boleh dibandingkan langsung
+dengan ECG diagnostik 12-lead yang memakai penempatan ekstremitas standar.
+
+### 3. Mulai dan Periksa Sinyal
+
+1. Pastikan [calibration_config.yaml](calibration_config.yaml) memuat:
+
+   ```yaml
+   filters:
+     notch_50hz: true
+     notch_quality_factor: 30.0
+   ```
+
+2. Jalankan receiver dalam sesi baru seperti pada Tahap 3. Tunggu sedikitnya
+   10 detik agar frame pertama selesai diekspor.
+3. Buka tampilan mV hasil notch pada terminal lain bila diperlukan:
+
+   ```bash
+   cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+   source venv_gui/bin/activate
+   python -m ecg_qt_viewer.main \
+     --data-dir "$SESSION_DIR/filtered" --source-mode mv --follow-live
+   ```
+
+4. Periksa Lead I dan Lead II lebih dahulu. Puncak R harus konsisten antar detak,
+   baseline tidak meloncat besar, dan status kualitas tidak boleh `FAIL`.
+5. Jika tampak bergerigi, jangan hanya mengandalkan notch. Diamkan subjek,
+   tekan kembali RA/LA/RLD, ganti elektroda yang longgar, dan pastikan kabel
+   tidak bergerak. Gerigi yang dominan di Lead I biasanya perlu memeriksa
+   pasangan RA-LA lebih dahulu.
+6. Bandingkan bila perlu: `calibrated/` adalah rekaman mV asli, sedangkan
+   `filtered/` adalah salinan dengan notch 50 Hz. Simpan keduanya untuk audit;
+   hilangnya noise setelah notch tidak membuktikan pemasangan elektroda sudah
+   baik.
+
+### 4. Akhiri Sesi
+
+1. Hentikan receiver dengan `Ctrl+C` atau menu **Stop Recording** pada OLED.
+2. Pastikan `session.json` berstatus `STOPPED` dan catat ID sesi, waktu,
+   posisi tubuh, serta setiap penggantian elektroda. Jangan simpan identitas
+   pribadi subjek di nama folder.
+3. Lepaskan elektroda perlahan dan periksa iritasi kulit. Bila ada keluhan,
+   hentikan penggunaan dan ikuti prosedur keselamatan setempat.
+
+### Diagnosa Cepat Kualitas Sinyal
+
+| Gejala | Periksa lebih dahulu |
+|---|---|
+| Gerigi 50 Hz, terutama Lead I | Kontak RA dan LA, kulit berminyak/berkeringat, kabel bergerak, serta kontak RLD/RL |
+| Baseline naik-turun lambat | Gerakan, bicara, napas dalam, elektroda longgar |
+| Sinyal sangat kecil atau datar | Label lead tertukar, konektor lepas, elektroda kering, atau mode sensor belum aktif |
+| Puncak terpotong/angka mV tidak wajar | Lepas elektroda dari subjek, periksa konektor/suplai, lalu uji ulang memakai simulator ECG |
+
+Jika noise tetap besar setelah pemasangan ulang, hentikan pengukuran manusia dan
+uji rangkaian lebih dahulu dengan simulator ECG. Filter notch hanya menekan
+komponen sekitar 50 Hz; ia tidak memperbaiki kontak elektroda, artefak gerak,
+atau masalah keselamatan listrik.
 
 Sebelum memakai perangkat, periksa pembuatan sesi tanpa membuka serial:
 
@@ -330,7 +441,7 @@ source ~/.config/ecgrhythmia/hivemq.env
 SESSION_DIR=data/sessions/session_DDMMYYYY_HHMMSS
 
 python3 mqtt_publisher.py \
-  --ecg-dir "$SESSION_DIR/calibrated" \
+  --ecg-dir "$SESSION_DIR/filtered" \
   --prediction-dir "$SESSION_DIR/predictions" \
   --broker 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud \
   --port 8883 \
@@ -351,7 +462,7 @@ Log sukses:
 
 ```text
 MQTT publisher started
-Watching ECG: .../data/sessions/session_DDMMYYYY_HHMMSS/calibrated
+Watching ECG: .../data/sessions/session_DDMMYYYY_HHMMSS/filtered
 Watching predictions: .../data/sessions/session_DDMMYYYY_HHMMSS/predictions
 Connecting to HiveMQ Cloud
 Broker: 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud:8883
@@ -435,7 +546,8 @@ Aktifkan hanya service OLED. Dari menu `Recording`, OLED membuat session baru
 `data/sessions/session_DDMMYYYY_HHMMSS/`, menulis
 `runtime/current_session.env`, lalu menjalankan receiver → AI → MQTT. Output
 receiver masuk ke `raw_adc/`, output mV ke `calibrated/`, input AI ke
-`model_ready/`, dan hasil AI/MQTT ke `predictions/`. Saat stop, OLED
+`filtered/` menjadi salinan notch otomatis dan sumber MQTT ketika notch aktif,
+input AI ke `model_ready/`, dan hasil AI/MQTT ke `predictions/`. Saat stop, OLED
 menghentikan MQTT → AI → receiver dan memfinalkan `session.json`; sesi lama
 tidak dihapus. Untuk wiring dan pengaturan service dengan GPIO20, lihat
 `OLED_STATUS_GUIDE.md`.

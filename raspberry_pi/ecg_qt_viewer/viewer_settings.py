@@ -52,6 +52,8 @@ class ViewerSettings:
     raw_view_mode: str = "Absolute Code"
     raw_y_scale: float = 10000.0
     raw_grid_spacing: float = 1000.0
+    notch_50hz: bool = False
+    zero_origin: bool = False
 
     @property
     def gain_mm_mv(self) -> float:
@@ -132,6 +134,8 @@ _KEYS = {
     "raw_view_mode": "display/raw_view_mode",
     "raw_y_scale": "display/raw_y_scale",
     "raw_grid_spacing": "display/raw_grid_spacing",
+    "notch_50hz": "display/notch_50hz",
+    "zero_origin": "display/zero_origin",
 }
 
 
@@ -215,6 +219,14 @@ def load_viewer_settings(
         raw_grid_spacing=_as_float(
             store.value(_KEYS["raw_grid_spacing"], defaults.raw_grid_spacing),
             defaults.raw_grid_spacing,
+        ),
+        notch_50hz=_as_bool(
+            store.value(_KEYS["notch_50hz"], defaults.notch_50hz),
+            defaults.notch_50hz,
+        ),
+        zero_origin=_as_bool(
+            store.value(_KEYS["zero_origin"], defaults.zero_origin),
+            defaults.zero_origin,
         ),
     )
     return loaded.normalized()

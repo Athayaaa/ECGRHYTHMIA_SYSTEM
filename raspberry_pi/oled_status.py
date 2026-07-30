@@ -44,6 +44,7 @@ RUNTIME_DIR = SCRIPT_DIR / "runtime"
 CURRENT_SESSION_ENV = RUNTIME_DIR / "current_session.env"
 OLED_SETTINGS_PATH = RUNTIME_DIR / "oled_settings.json"
 DEFAULT_SESSION_ROOT = SCRIPT_DIR / "data" / "sessions"
+CALIBRATION_CONFIG_PATH = SCRIPT_DIR / "calibration_config.yaml"
 
 DEFAULT_DATA_ROOT = "data/corrected_sessions"
 FALLBACK_DATA_ROOT = "data"
@@ -123,6 +124,32 @@ def read_key_value_env(path: Path) -> dict[str, str]:
     except OSError:
         return {}
     return result
+
+
+def notch_50hz_enabled(config_path: Path = CALIBRATION_CONFIG_PATH) -> bool:
+    """Read the one runtime filter flag without adding a PyYAML OLED dependency."""
+
+    try:
+        within_filters = False
+        filters_indent = 0
+        for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+            without_comment = raw_line.split("#", 1)[0]
+            stripped = without_comment.strip()
+            if not stripped:
+                continue
+            indent = len(without_comment) - len(without_comment.lstrip())
+            if stripped == "filters:":
+                within_filters = True
+                filters_indent = indent
+                continue
+            if within_filters and indent <= filters_indent:
+                within_filters = False
+            if within_filters and stripped.startswith("notch_50hz:"):
+                value = stripped.split(":", 1)[1].strip().lower()
+                return value in {"true", "yes", "1", "on"}
+    except OSError:
+        pass
+    return False
 
 
 def shell_quote_env(value: str) -> str:
@@ -695,6 +722,9 @@ class SessionController:
             "SESSION_DIR": str(paths.root),
             "RAW_ADC_DIR": str(paths.raw_adc),
             "CALIBRATED_DIR": str(paths.calibrated),
+            "FILTERED_DIR": (
+                str(paths.filtered) if notch_50hz_enabled() else ""
+            ),
             "MODEL_READY_DIR": str(paths.model_ready),
             "PREDICTION_DIR": str(paths.predictions),
             "LOG_DIR": str(paths.logs),
@@ -705,6 +735,7 @@ class SessionController:
             "session": paths.root,
             "raw_adc": paths.raw_adc,
             "calibrated": paths.calibrated,
+            "filtered": paths.filtered if notch_50hz_enabled() else paths.calibrated,
             "model_ready": paths.model_ready,
             "prediction": paths.predictions,
         }

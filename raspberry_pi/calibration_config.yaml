@@ -26,7 +26,8 @@ filters:
   remove_mean: false
   high_pass_cutoff_hz: 0.0
   low_pass_cutoff_hz: 0.0
-  notch_50hz: false
+  notch_50hz: true
+  notch_quality_factor: 30.0
 metadata:
   method: multipoint_rpeak
   expected_bpm: 60.0

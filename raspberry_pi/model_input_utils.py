@@ -345,6 +345,7 @@ def build_model_metadata(
         "canonical_format": "npy",
         "calibration_method": calibration_method,
         "calibration_scale_mV_per_count": calibration_scale,
+        "source_processing": source_metadata.get("processing", {}),
         "preprocessing_steps_applied": preprocessing_steps,
         "preprocessing_config": preprocessing_config,
         "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

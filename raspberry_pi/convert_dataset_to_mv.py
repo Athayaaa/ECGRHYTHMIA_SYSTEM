@@ -15,8 +15,10 @@ from calibration_utils import (
     find_complete_frame_sets,
     load_calibration_config,
     load_raw_frame,
+    notch_50hz_processing,
     write_calibrated_frame,
 )
+from ecg_filters import apply_notch_filter
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -45,6 +47,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Output directory for frame_xxxxxx_mv.* files",
     )
+    parser.add_argument(
+        "--filtered-output-dir",
+        type=Path,
+        help="Optional output directory for automatic notch-filtered mV frames",
+    )
     return parser.parse_args()
 
 
@@ -60,6 +67,11 @@ def main() -> int:
     args = parse_args()
     input_dir = args.input_dir.resolve()
     output_dir = args.output_dir.resolve()
+    filtered_output_dir = (
+        args.filtered_output_dir.resolve()
+        if args.filtered_output_dir is not None
+        else output_dir.parent / "filtered"
+    )
 
     try:
         if path_is_inside(output_dir, input_dir):
@@ -94,6 +106,29 @@ def main() -> int:
                     "json": str(frame.json_path),
                 },
             )
+            processing = notch_50hz_processing(calibration)
+            if processing is not None:
+                filtered_samples = apply_notch_filter(
+                    samples_mv,
+                    sample_rate_hz,
+                    frequency_hz=float(processing["frequency_hz"]),
+                    quality_factor=float(processing["quality_factor"]),
+                )
+                write_calibrated_frame(
+                    output_dir=filtered_output_dir,
+                    stem=frame.stem,
+                    samples_mv=filtered_samples,
+                    sample_rate_hz=sample_rate_hz,
+                    calibration=calibration,
+                    source_metadata=metadata,
+                    source_files={
+                        "csv": str(frame.csv_path),
+                        "bin": str(frame.bin_path),
+                        "npy": str(frame.npy_path),
+                        "json": str(frame.json_path),
+                    },
+                    processing={"filters": [processing]},
+                )
             written += 1
             print(
                 f"exported {frame.stem}: {paths.csv_path.name}, "
@@ -105,6 +140,8 @@ def main() -> int:
 
     print(f"OK: converted {written} frame(s) to mV")
     print(f"output_dir: {output_dir}")
+    if notch_50hz_processing(calibration) is not None:
+        print(f"filtered_output_dir: {filtered_output_dir}")
     return 0
 
 

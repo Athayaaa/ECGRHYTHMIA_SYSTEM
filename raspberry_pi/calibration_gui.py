@@ -313,7 +313,8 @@ def default_calibration_config() -> dict[str, Any]:
             "remove_mean": False,
             "high_pass_cutoff_hz": 0.0,
             "low_pass_cutoff_hz": 0.0,
-            "notch_50hz": False,
+            "notch_50hz": True,
+            "notch_quality_factor": 30.0,
         },
     }
 
@@ -346,7 +347,10 @@ def merge_calibration_config(saved: dict[str, Any]) -> dict[str, Any]:
         config["filters"]["low_pass_cutoff_hz"] = float(
             filters.get("low_pass_cutoff_hz", filters.get("lowpass_hz", 0.0))
         )
-        config["filters"]["notch_50hz"] = bool(filters.get("notch_50hz", False))
+        config["filters"]["notch_50hz"] = bool(filters.get("notch_50hz", True))
+        config["filters"]["notch_quality_factor"] = float(
+            filters.get("notch_quality_factor", 30.0)
+        )
 
     metadata = saved.get("metadata", {})
     config["metadata"] = metadata if isinstance(metadata, dict) else {}
@@ -374,6 +378,9 @@ def initialize_ui_state(saved_config: dict[str, Any]) -> None:
             saved_config["filters"]["low_pass_cutoff_hz"]
         ),
         "filter_notch_50hz": bool(saved_config["filters"]["notch_50hz"]),
+        "filter_notch_quality_factor": float(
+            saved_config["filters"]["notch_quality_factor"]
+        ),
         "conversion_mode": (
             "ProSim calibrated mV"
             if saved_config.get("calibration_source") == "prosim"
@@ -409,6 +416,9 @@ def apply_calibration_config_to_state(saved: dict[str, Any]) -> dict[str, Any]:
         config["filters"]["low_pass_cutoff_hz"]
     )
     st.session_state["filter_notch_50hz"] = bool(config["filters"]["notch_50hz"])
+    st.session_state["filter_notch_quality_factor"] = float(
+        config["filters"]["notch_quality_factor"]
+    )
     st.session_state["conversion_mode"] = (
         "ProSim calibrated mV"
         if config.get("calibration_source") == "prosim"
@@ -464,6 +474,9 @@ def current_calibration_from_state() -> dict[str, Any]:
             ),
             "low_pass_cutoff_hz": float(st.session_state["filter_low_pass_cutoff_hz"]),
             "notch_50hz": bool(st.session_state["filter_notch_50hz"]),
+            "notch_quality_factor": float(
+                st.session_state["filter_notch_quality_factor"]
+            ),
         },
     }
 
@@ -1293,8 +1306,8 @@ def render_advanced_calibration_values() -> None:
         with cols[2]:
             st.checkbox("notch 50 Hz", key="filter_notch_50hz")
         st.caption(
-            "These filter settings are saved with calibration config. In this "
-            "Phase 3E GUI, only mean removal is applied to plotted/exported mV."
+            "When enabled, the runtime exports a separate zero-phase 50 Hz notch "
+            "copy in filtered/. The original calibrated/ mV frames remain unchanged."
         )
 
 

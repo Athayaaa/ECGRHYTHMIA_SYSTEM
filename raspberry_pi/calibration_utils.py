@@ -11,6 +11,8 @@ import re
 from typing import Any
 
 import numpy as np
+
+from ecg_filters import DEFAULT_NOTCH_QUALITY_FACTOR, NOTCH_50HZ_FREQUENCY_HZ
 import yaml
 
 
@@ -519,6 +521,28 @@ def frame_time_axis(sample_rate_hz: int, frame_size: int) -> np.ndarray:
     return np.arange(frame_size, dtype=np.float32) / float(sample_rate_hz)
 
 
+def notch_50hz_processing(calibration: dict[str, Any]) -> dict[str, Any] | None:
+    """Return validated automatic notch settings, or ``None`` when disabled."""
+
+    filters = calibration.get("filters", {})
+    if not isinstance(filters, dict) or not bool(filters.get("notch_50hz", False)):
+        return None
+    try:
+        quality_factor = float(
+            filters.get("notch_quality_factor", DEFAULT_NOTCH_QUALITY_FACTOR)
+        )
+    except (TypeError, ValueError) as error:
+        raise CalibrationError("notch_quality_factor must be numeric") from error
+    if not np.isfinite(quality_factor) or quality_factor <= 0.0:
+        raise CalibrationError("notch_quality_factor must be finite and positive")
+    return {
+        "name": "notch_50hz",
+        "frequency_hz": NOTCH_50HZ_FREQUENCY_HZ,
+        "quality_factor": quality_factor,
+        "phase": "zero_phase_forward_backward",
+    }
+
+
 def write_calibrated_frame(
     output_dir: Path,
     stem: str,
@@ -527,6 +551,7 @@ def write_calibrated_frame(
     calibration: dict[str, Any],
     source_metadata: dict[str, Any] | None = None,
     source_files: dict[str, str] | None = None,
+    processing: dict[str, Any] | None = None,
 ) -> CalibratedExportPaths:
     if samples_mv.shape != EXPECTED_SHAPE:
         raise CalibrationError(
@@ -594,6 +619,8 @@ def write_calibrated_frame(
             "scale_applied_to_all_leads": True,
         },
     }
+    if processing is not None:
+        metadata["processing"] = processing
     json_path.write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

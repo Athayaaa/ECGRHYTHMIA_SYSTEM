@@ -236,6 +236,8 @@ class MainWindowHeadlessTests(unittest.TestCase):
         self.assertFalse(window.y_range_combo.isVisible())
         self.assertFalse(window.display_calibration_btn.isVisible())
         self.assertFalse(window.display_calibration_action.isEnabled())
+        self.assertFalse(window.notch_50hz_checkbox.isVisible())
+        self.assertFalse(window.zero_origin_checkbox.isVisible())
         self.assertIn("RAW ADC", window.mode_badge.text())
         self.assertEqual(window.plot_widget.display_unit, "count")
         self.assertEqual(window.plot_widget.grid_style, "engineering")
@@ -264,6 +266,8 @@ class MainWindowHeadlessTests(unittest.TestCase):
         self.assertTrue(window.y_range_combo.isVisible())
         self.assertTrue(window.display_calibration_btn.isVisible())
         self.assertTrue(window.display_calibration_action.isEnabled())
+        self.assertTrue(window.notch_50hz_checkbox.isVisible())
+        self.assertTrue(window.zero_origin_checkbox.isVisible())
         self.assertEqual(window.plot_widget.display_unit, "mv")
         self.assertEqual(window.plot_widget.grid_style, "medical")
         mv_axis = window.plot_widget.plots[0].getAxis("left")
@@ -276,6 +280,37 @@ class MainWindowHeadlessTests(unittest.TestCase):
             {"calibration": {"method": "legacy_preliminary"}}
         )
         self.assertIn("PRELIMINARY mV", window.mode_badge.text())
+
+    def test_notch_50hz_changes_only_the_mv_plot_copy(self) -> None:
+        time = np.arange(2500, dtype=np.float64) / 250.0
+        target = np.sin(2.0 * np.pi * 10.0 * time)
+        noise = 0.7 * np.sin(2.0 * np.pi * 50.0 * time)
+        lead_i = (target + noise).astype(np.float32)
+        samples = np.column_stack((lead_i, lead_i, lead_i)).astype(np.float32)
+        source_before = samples.copy()
+        _write_frame(self.directory, 1, samples=samples)
+        window = self._construct_window()
+        record = window._repository.get_by_id(1)
+        self.assertIsNotNone(record)
+        window._watcher.emit_ready(record)
+        self.app.processEvents()
+
+        plotted_without_notch = window.plot_widget._source_data.copy()
+        window.notch_50hz_checkbox.setChecked(True)
+        self.app.processEvents()
+
+        np.testing.assert_array_equal(samples, source_before)
+        np.testing.assert_array_equal(window._mv_source_data, source_before)
+        self.assertFalse(
+            np.array_equal(window.plot_widget._source_data, plotted_without_notch)
+        )
+
+        window.zero_origin_checkbox.setChecked(True)
+        self.app.processEvents()
+        np.testing.assert_array_equal(
+            window.plot_widget._source_data[0], np.zeros(3, dtype=np.float32)
+        )
+        np.testing.assert_array_equal(window._mv_source_data, source_before)
 
     def test_bpm_badge_information_and_status_follow_selected_frame(self) -> None:
         _write_frame(self.directory, 1, samples=_synthetic_ecg(60.0))

@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .display_filters import apply_notch_filter_50hz, start_each_lead_at_zero
 from .ecg_plot_widget import ECGPlotWidget
 from .frame_repository import FrameRecord, FrameRepository
 from .frame_validator import FrameValidator, ValidationResult
@@ -113,6 +114,7 @@ class MainWindow(QMainWindow):
         self._pending_live_record: FrameRecord | None = None
         self._live_selection_scheduled = False
         self._raw_source_data: np.ndarray | None = None
+        self._mv_source_data: np.ndarray | None = None
         self._zero_code: float | None = None
         self._adcmax: float | None = None
         self._estimated_bpm: float | None = None
@@ -522,6 +524,18 @@ class MainWindow(QMainWindow):
         self.crosshair_checkbox = QCheckBox("Crosshair", self._control_panel)
         row3.addWidget(self.crosshair_checkbox)
 
+        self.notch_50hz_checkbox = QCheckBox("Notch 50 Hz", self._control_panel)
+        self.notch_50hz_checkbox.setToolTip(
+            "Display-only 50 Hz notch. Recorded mV frames and AI input are unchanged."
+        )
+        row3.addWidget(self.notch_50hz_checkbox)
+
+        self.zero_origin_checkbox = QCheckBox("Start at 0", self._control_panel)
+        self.zero_origin_checkbox.setToolTip(
+            "Display-only offset removal: the first sample of every lead is shown at 0 mV."
+        )
+        row3.addWidget(self.zero_origin_checkbox)
+
         self.lock_view_checkbox = QCheckBox("Lock View", self._control_panel)
         row3.addWidget(self.lock_view_checkbox)
 
@@ -586,6 +600,8 @@ class MainWindow(QMainWindow):
         self.lead_mode_combo.currentTextChanged.connect(self.plot_widget.set_lead_mode)
         self.grid_checkbox.toggled.connect(self.plot_widget.set_grid_visible)
         self.crosshair_checkbox.toggled.connect(self.plot_widget.set_crosshair_enabled)
+        self.notch_50hz_checkbox.toggled.connect(self._notch_50hz_toggled)
+        self.zero_origin_checkbox.toggled.connect(self._zero_origin_toggled)
         self.lock_view_checkbox.toggled.connect(self.plot_widget.set_view_locked)
         self.sync_y_checkbox.toggled.connect(self.plot_widget.set_y_ranges_synchronized)
         self.line_width_spin.valueChanged.connect(self.plot_widget.set_line_width)
@@ -728,6 +744,8 @@ class MainWindow(QMainWindow):
         self._select_combo_text(self.raw_view_combo, saved.raw_view_mode)
         self._select_combo_data(self.raw_y_scale_combo, saved.raw_y_scale)
         self._select_combo_data(self.raw_grid_combo, saved.raw_grid_spacing)
+        self.notch_50hz_checkbox.setChecked(saved.notch_50hz)
+        self.zero_origin_checkbox.setChecked(saved.zero_origin)
 
         self._select_combo_data(
             self.paper_speed_combo,
@@ -813,6 +831,8 @@ class MainWindow(QMainWindow):
         self.y_range_combo.setVisible(not is_raw)
         self.display_calibration_btn.setVisible(not is_raw)
         self.display_calibration_action.setEnabled(not is_raw)
+        self.notch_50hz_checkbox.setVisible(not is_raw)
+        self.zero_origin_checkbox.setVisible(not is_raw)
 
         metadata = (
             self._current_validation.metadata
@@ -905,6 +925,20 @@ class MainWindow(QMainWindow):
         # Re-display current frame with new view mode and Auto Y
         if self._current_record is not None:
             self._select_record(self._current_record, user_requested=False, show_error=False)
+
+    def _notch_50hz_toggled(self, enabled: bool) -> None:
+        """Re-render the current mV frame without changing its stored samples."""
+        self._settings.setValue("display/notch_50hz", enabled)
+        if self._initializing or self.data_mode_combo.currentText() == "Raw ADC":
+            return
+        self._render_current_mv_frame()
+
+    def _zero_origin_toggled(self, enabled: bool) -> None:
+        """Offset only the mV display so each lead begins at zero."""
+        self._settings.setValue("display/zero_origin", enabled)
+        if self._initializing or self.data_mode_combo.currentText() == "Raw ADC":
+            return
+        self._render_current_mv_frame()
 
     def _raw_y_scale_changed(self) -> None:
         """Handle raw Y scale change."""
@@ -1168,6 +1202,7 @@ class MainWindow(QMainWindow):
                 # Retain the validated source by reference. Display
                 # transforms allocate only when they change values.
                 self._raw_source_data = result.samples
+                self._mv_source_data = None
                 self._zero_code = metadata.get("zero_code")
                 self._adcmax = metadata.get("ADCMAX")
 
@@ -1175,11 +1210,13 @@ class MainWindow(QMainWindow):
                 transformed_data = self._apply_raw_transformation(result.samples, metadata)
                 self.plot_widget.set_frame(transformed_data, sample_rate=250)
             else:
-                # For mV mode, use data as-is
+                # Keep calibrated mV source data untouched; display-only filters
+                # are applied to a temporary copy immediately before plotting.
                 self._raw_source_data = None
                 self._zero_code = None
                 self._adcmax = None
-                self.plot_widget.set_frame(result.samples, sample_rate=250)
+                self._mv_source_data = result.samples
+                self._render_current_mv_frame()
 
             # Auto Y on every frame load
             QTimer.singleShot(0, self._auto_scale_y)
@@ -1189,6 +1226,7 @@ class MainWindow(QMainWindow):
                 self.plot_widget.start_replay(LIVE_REPLAY_SPEED)
 
         else:
+            self._mv_source_data = None
             self.plot_widget.clear_frame()
             if show_error or user_requested:
                 details = "; ".join(result.errors or result.reasons)
@@ -1244,6 +1282,19 @@ class MainWindow(QMainWindow):
         else:
             # Unknown mode, return as-is
             return data
+
+    def _render_current_mv_frame(self) -> None:
+        """Render calibrated samples with optional presentation-only filtering."""
+        if self._mv_source_data is None:
+            return
+
+        display_data = self._mv_source_data
+        if self.notch_50hz_checkbox.isChecked():
+            display_data = apply_notch_filter_50hz(display_data, 250.0)
+        if self.zero_origin_checkbox.isChecked():
+            display_data = start_each_lead_at_zero(display_data)
+        self.plot_widget.set_frame(display_data, sample_rate=250)
+        QTimer.singleShot(0, self._auto_scale_y)
 
     def _show_failed_load(self, record: FrameRecord, reason: str) -> None:
         self._clear_bpm_display()

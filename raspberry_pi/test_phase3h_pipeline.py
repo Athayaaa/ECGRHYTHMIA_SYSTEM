@@ -222,7 +222,7 @@ class Phase3HPipelineTests(unittest.TestCase):
         reasons = " ".join(result.signal_quality["reasons"])
         self.assertEqual(result.signal_quality["status"], "FAIL")
         self.assertIn("exceeds 10", reasons)
-        self.assertIn("1850", reasons)
+        self.assertIn("centered maximum mV", reasons)
 
     def test_successful_end_to_end_replay(self) -> None:
         self.write_raw_frame(self.valid_prosim_like_frame(), index=1)
@@ -239,6 +239,50 @@ class Phase3HPipelineTests(unittest.TestCase):
         self.assertEqual(len(list((self.output_dir / "calibrated").glob("*.json"))), 2)
         self.assertEqual(len(list((self.output_dir / "model_ready").glob("*.npy"))), 2)
         self.assertTrue((self.output_dir / "replay_summary.json").exists())
+
+    def test_notch_enabled_exports_filtered_mv_and_uses_it_for_model_input(self) -> None:
+        self.config_path.write_text(
+            self.config_path.read_text(encoding="utf-8")
+            + "filters:\n  notch_50hz: true\n  notch_quality_factor: 30.0\n",
+            encoding="utf-8",
+        )
+        samples = self.valid_prosim_like_frame()
+        time = np.arange(EXPECTED_SHAPE[0], dtype=np.float32) / 250.0
+        interference = 0.5 * np.sin(2.0 * np.pi * 50.0 * time)
+        samples[:, 0] += interference
+        samples[:, 1] += interference
+        samples[:, 2] = samples[:, 1] - samples[:, 0]
+        self.write_raw_frame(samples)
+
+        summary = self.replay()
+
+        filtered_npy = self.output_dir / "filtered" / "frame_000001_mv.npy"
+        filtered_json = self.output_dir / "filtered" / "frame_000001_mv.json"
+        self.assertTrue(filtered_npy.exists())
+        metadata = json.loads(filtered_json.read_text(encoding="utf-8"))
+        filter_metadata = metadata["processing"]["filters"][0]
+        self.assertEqual(filter_metadata["name"], "notch_50hz")
+        self.assertEqual(filter_metadata["frequency_hz"], 50.0)
+
+        original = np.load(self.output_dir / "calibrated" / "frame_000001_mv.npy")
+        filtered = np.load(filtered_npy)
+        frequencies = np.fft.rfftfreq(EXPECTED_SHAPE[0], 1.0 / 250.0)
+        tone_index = int(np.argmin(np.abs(frequencies - 50.0)))
+        original_tone = np.abs(np.fft.rfft(original[:, 0]))[tone_index]
+        filtered_tone = np.abs(np.fft.rfft(filtered[:, 0]))[tone_index]
+        self.assertLess(filtered_tone, original_tone * 0.05)
+        np.testing.assert_allclose(filtered[:, 2], filtered[:, 1] - filtered[:, 0])
+
+        model_metadata = json.loads(
+            Path(summary.frame_results[0].model_ready_json_path).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("/filtered/", model_metadata["source_file"])
+        self.assertEqual(
+            model_metadata["source_processing"]["filters"][0]["name"],
+            "notch_50hz",
+        )
 
     def test_receiver_launches_raw_follow_live_viewer(self) -> None:
         process = mock.Mock(pid=4321)
