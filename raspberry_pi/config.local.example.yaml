@@ -1,0 +1,17 @@
+# Salin file ini menjadi config.local.yaml untuk konfigurasi Raspi setempat:
+#   cp config.local.example.yaml config.local.yaml
+#
+# File config.local.yaml diabaikan Git. Perubahan di sini tidak akan
+# mengganggu git pull dan akan menimpa nilai yang sama di config.yaml.
+
+serial:
+  port: /dev/ttyACM0
+
+device:
+  device_id: device01
+  state: testing
+
+model_ready_export:
+  enabled: true
+  # Hanya untuk test transmisi tanpa lead. Gunakan ambang tervalidasi untuk ECG nyata.
+  max_abs_mv: 1000.0

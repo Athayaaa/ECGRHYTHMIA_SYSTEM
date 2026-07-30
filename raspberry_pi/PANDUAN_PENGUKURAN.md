@@ -530,6 +530,34 @@ OLED tidak membuka serial, tidak menjalankan AI, dan tidak membaca prediction
 JSON. OLED hanya menampilkan status service AI/MQTT dan dapat mengontrol service
 receiver, AI, serta MQTT dari rotary menu.
 
+### Perbaikan Environment AI
+
+Jalankan perintah berikut setelah clone baru, setelah `git pull` yang mengubah
+dependency AI, atau bila log AI menyebut LiteRT/SciPy tidak dapat dimuat:
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+systemctl --user stop ecgrhythmia-ai.service
+bash setup_ai_env.sh
+systemctl --user start ecgrhythmia-ai.service
+```
+
+Script ini memasang ulang dependency yang dipin tanpa cache dan memverifikasi
+NumPy, SciPy, LiteRT, serta `model.tflite` sebelum worker dijalankan.
+
+### Konfigurasi Lokal Raspi
+
+Jangan mengubah `config.yaml` untuk port serial atau parameter khusus perangkat.
+Gunakan override yang diabaikan Git agar `git pull` tidak menimbulkan konflik:
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+[ -e config.local.yaml ] || cp config.local.example.yaml config.local.yaml
+```
+
+`config.local.yaml` dapat memuat `serial.port`, `device`, dan
+`model_ready_export`. Nilainya menimpa `config.yaml` hanya pada Raspi tersebut.
+
 ### Mode Service OLED
 
 Untuk penggunaan mandiri tanpa empat terminal, install service user sekali saja:

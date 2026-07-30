@@ -190,13 +190,11 @@ python3.10 -m venv venv_gui
 source venv_gui/bin/activate
 pip install -r ecg_qt_viewer/requirements.txt
 
-# 3. venv_ai (AI engine - TFLite)
-python3 -m venv venv_ai
-source venv_ai/bin/activate
-pip install -r ../third_party/ecg-edge-ai-engine/requirements.txt
+# 3. venv_ai (AI engine - LiteRT)
+# Script memasang versi yang dipin, memasang engine editable, lalu memuat model.
+bash setup_ai_env.sh
 
-# MQTT publisher menggunakan numpy, paho-mqtt, dan psutil dari requirements project.
-pip install -r requirements.txt
+# MQTT publisher memakai venv utama dari langkah 1.
 
 # 4. venv_oled (OLED I2C + rotary encoder)
 python3 -m venv venv_oled
@@ -386,9 +384,22 @@ python3 receiver.py --help
 
 ### Konfigurasi Receiver (`config.yaml`)
 
+`config.yaml` adalah konfigurasi dasar yang dikelola Git. Untuk nilai yang
+khusus untuk satu Raspi (misalnya `/dev/ttyACM0`, `device_id`, atau ambang test),
+buat override lokal sekali saja. File ini otomatis dimuat receiver dan tidak akan
+menjadi perubahan Git saat `git pull`:
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+[ -e config.local.yaml ] || cp config.local.example.yaml config.local.yaml
+```
+
+Untuk pengukuran ECG nyata, gunakan `max_abs_mv` yang sudah divalidasi; nilai
+longgar pada contoh hanya untuk pengujian transmisi tanpa lead.
+
 ```yaml
 serial:
-  port: /dev/ttyUSB0         # Port serial
+  port: /dev/ttyACM0         # Port serial
   baudrate: 115200            # Baudrate
   timeout_seconds: 0.1        # Timeout baca serial
   read_size_bytes: 1024       # Ukuran baca per iterasi
@@ -414,9 +425,9 @@ runtime:
   launch_ecg_viewer: true     # Auto-launch ECG Viewer
 
 model_ready_export:
-  enabled: false              # Auto-export model-ready NPY
+  enabled: true               # Auto-export model-ready NPY
   output_dir: data/model_ready
-  max_abs_mv: 10.0            # Threshold clipping mV
+  max_abs_mv: 1000.0          # Hanya untuk test transmisi tanpa lead
 ```
 
 ### Output yang Dihasilkan Receiver

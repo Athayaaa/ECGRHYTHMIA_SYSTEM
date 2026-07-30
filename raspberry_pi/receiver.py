@@ -66,10 +66,41 @@ ADS1293_STREAM_START_COMMAND = "ads stream start"
 DISALLOWED_START_COMMANDS = {"ads read", "ads debug on"}
 
 
-def load_config(path: Path) -> dict[str, Any]:
+def local_config_path(path: Path) -> Path:
+    """Return the optional, Git-ignored override beside a config file."""
+
+    return path.with_name(f"{path.stem}.local{path.suffix}")
+
+
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Configuration root must be a mapping: {path}")
     return data
+
+
+def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Merge nested local settings without discarding unspecified defaults."""
+
+    merged = dict(base)
+    for key, override_value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, dict) and isinstance(override_value, dict):
+            merged[key] = _merge_config(base_value, override_value)
+        else:
+            merged[key] = override_value
+    return merged
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    """Load tracked config and an optional Git-ignored local override."""
+
+    config = _load_yaml_mapping(path)
+    local_path = local_config_path(path)
+    if local_path.is_file():
+        config = _merge_config(config, _load_yaml_mapping(local_path))
+    return config
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

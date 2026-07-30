@@ -1,11 +1,9 @@
-# keras==3.14.1
-# tensorflow==2.21.0
-numpy==1.26.4
+# Runtime yang sudah diverifikasi pada Raspberry Pi OS 64-bit, Python 3.10.
+# LiteRT 2.1.6 mendukung NumPy >=1.23.2; pin ini menghindari resolver mengganti
+# ABI NumPy saat environment AI sedang diperbaiki.
+numpy==2.2.6
 pandas==2.3.3
 scipy==1.15.3
 matplotlib==3.10.9
 PyWavelets==1.8.0
-# fastapi 
-# uvicorn 
-# wfdb==4.3.1
 ai-edge-litert==2.1.6

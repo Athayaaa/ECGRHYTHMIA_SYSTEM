@@ -45,3 +45,7 @@ Thumbs.db
 # Keep Raspberry Pi sample/test data in the repository for Raspi setup.
 !raspberry_pi/data/
 !raspberry_pi/data/**
+
+# Override khusus perangkat Raspberry Pi. Jangan ikut Git agar git pull tidak
+# berbenturan dengan port serial, device ID, atau parameter testing lokal.
+raspberry_pi/config.local.yaml

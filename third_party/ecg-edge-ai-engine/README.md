@@ -54,7 +54,7 @@ ecg-edge-ai-engine/
 - **Python**: Versi minimum `3.10`
 - **Platform**: Ubuntu laptop `x86_64` atau Raspberry Pi 4 dengan OS Ubuntu 64-bit (`aarch64`)
 - **Dependencies utama**:
-  - `numpy==1.26.4`
+  - `numpy==2.2.6`
   - `scipy==1.15.3`
   - `pandas` (>= 2.3.3)
   - `PyWavelets==1.8.0`
