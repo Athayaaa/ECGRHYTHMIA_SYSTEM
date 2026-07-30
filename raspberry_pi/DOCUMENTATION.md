@@ -194,6 +194,9 @@ pip install -r ecg_qt_viewer/requirements.txt
 # Script memasang versi yang dipin, memasang engine editable, lalu memuat model.
 bash setup_ai_env.sh
 
+# venv_ai sengaja tidak disimpan di Git. Jangan di-commit; script ini dapat
+# membangunnya ulang secara deterministik kapan saja.
+
 # MQTT publisher memakai venv utama dari langkah 1.
 
 # 4. venv_oled (OLED I2C + rotary encoder)

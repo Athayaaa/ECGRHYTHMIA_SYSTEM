@@ -544,6 +544,8 @@ systemctl --user start ecgrhythmia-ai.service
 
 Script ini memasang ulang dependency yang dipin tanpa cache dan memverifikasi
 NumPy, SciPy, LiteRT, serta `model.tflite` sebelum worker dijalankan.
+Folder `venv_ai/` sengaja lokal dan diabaikan Git, sehingga instalasi package
+tidak akan menjadi perubahan yang menghambat `git pull`.
 
 ### Konfigurasi Lokal Raspi
 
