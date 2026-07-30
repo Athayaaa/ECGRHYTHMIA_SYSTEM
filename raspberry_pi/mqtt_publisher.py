@@ -118,6 +118,8 @@ class PublisherConfig:
     payload_format: str = PAYLOAD_FORMAT_JSON
     stress_test: bool = False
     json_topic_exact: bool = False
+    frame_id: str | None = None
+    force_republish: bool = False
 
 
 class SystemTelemetry:
@@ -495,6 +497,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tls", action="store_true")
     parser.add_argument("--ca-cert", type=Path)
     parser.add_argument("--state-file", type=Path)
+    parser.add_argument(
+        "--frame-id",
+        help="Publish only this frame ID, for example 000001",
+    )
+    parser.add_argument(
+        "--force-republish",
+        action="store_true",
+        help="Ignore publish state so --follow can resend the selected frame",
+    )
     parser.add_argument("--qos", type=int, default=DEFAULT_QOS, choices=(0, 1, 2))
     parser.add_argument(
         "--payload-format",
@@ -556,6 +567,8 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
         payload_format=args.payload_format,
         stress_test=args.stress_test,
         json_topic_exact=args.json_topic_exact,
+        frame_id=str(args.frame_id).zfill(6) if args.frame_id else None,
+        force_republish=args.force_republish,
     )
 
 
@@ -1121,6 +1134,8 @@ def scan_once(
     payload_format = config.payload_format
     state_topic = state_topic_scope(config)
     for frame_id, ecg_path in frames:
+        if config.frame_id is not None and frame_id != config.frame_id:
+            continue
         try:
             if not is_file_stable(ecg_path, delay=config.stable_delay):
                 stats.waiting += 1
@@ -1130,6 +1145,7 @@ def scan_once(
             ecg_sha256 = sha256_file(ecg_path)
             if (
                 not config.dry_run
+                and not config.force_republish
                 and state.is_frame_file_sent(
                     frame_id=frame_id,
                     ecg_sha256=ecg_sha256,
@@ -1182,6 +1198,7 @@ def scan_once(
 
         if (
             not config.dry_run
+            and not config.force_republish
             and state.is_sent(
                 prepared,
                 config.broker,

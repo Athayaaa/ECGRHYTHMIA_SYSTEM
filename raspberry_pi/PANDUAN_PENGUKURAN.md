@@ -800,6 +800,43 @@ python3 mqtt_publisher.py \
   --once
 ```
 
+### Publish Satu Frame Berulang
+
+Untuk test konektivitas atau beban broker, publish satu frame yang sama terus
+menerus. `--force-republish` melewati publish-state dan `--frame-id` memastikan
+hanya satu frame yang dikirim. Hentikan dengan `Ctrl+C`.
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+source venv/bin/activate
+source runtime/current_session.env
+set -a
+source runtime/mqtt_credentials.env
+set +a
+
+python3 mqtt_publisher.py \
+  --ecg-dir "$SESSION_DIR/calibrated" \
+  --prediction-dir "$SESSION_DIR/predictions" \
+  --broker "$MQTT_BROKER" \
+  --port "$MQTT_PORT" \
+  --topic "$MQTT_TOPIC" \
+  --device-id "$MQTT_DEVICE_ID" \
+  --username "$MQTT_USERNAME" \
+  --password-env MQTT_PASSWORD \
+  --tls \
+  --json-topic-exact \
+  --payload-format json \
+  --frame-id 000001 \
+  --force-republish \
+  --stress-test \
+  --follow \
+  --poll-interval 1
+```
+
+Payload berulang memakai `message_id` yang sama karena frame ID-nya sama.
+HiveMQ tetap menampilkan setiap publish, tetapi dashboard yang melakukan
+deduplikasi berdasarkan `message_id` dapat menyembunyikan pengulangan tersebut.
+
 Untuk test ProSim sekali kirim dalam mode NPY:
 
 ```bash

@@ -239,6 +239,14 @@ class PayloadValidationTests(TestCase):
             parser.parse_args([*base_args, "--json-topic-exact"])
         )
         self.assertTrue(exact_config.json_topic_exact)
+        repeat_config = mqtt_publisher.resolve_config(
+            parser.parse_args(
+                [*base_args, "--frame-id", "1", "--force-republish", "--follow"]
+            )
+        )
+        self.assertEqual(repeat_config.frame_id, "000001")
+        self.assertTrue(repeat_config.force_republish)
+        self.assertTrue(repeat_config.follow)
         with self.assertRaises(SystemExit):
             parser.parse_args([*base_args, "--payload-format", "csv"])
 
@@ -833,6 +841,34 @@ class StateAndPublishTests(TestCase):
             self.assertEqual(stats.skipped, 1)
             self.assertEqual(stats.waiting, 0)
             self.assertEqual(stats.sent, 0)
+
+    def test_force_republish_sends_only_selected_frame_again(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ecg_dir, prediction_dir = write_pair(root, frame_id="000001")
+            write_pair(root, frame_id="000002")
+            state_path = prediction_dir / "mqtt_publish_state.json"
+            config = mqtt_publisher.PublisherConfig(
+                ecg_dir=ecg_dir,
+                prediction_dir=prediction_dir,
+                broker="localhost",
+                topic="ecgrhythmia/device01",
+                device_id="device01",
+                stable_delay=0,
+                state_path=state_path,
+                frame_id="000001",
+                force_republish=True,
+            )
+
+            first_client = MockMqttClient()
+            second_client = MockMqttClient()
+            first_stats = mqtt_publisher.run_publisher(config, client=first_client)
+            second_stats = mqtt_publisher.run_publisher(config, client=second_client)
+
+            self.assertEqual(first_stats.sent, 1)
+            self.assertEqual(second_stats.sent, 1)
+            self.assertEqual(len(first_client.published), 1)
+            self.assertEqual(len(second_client.published), 1)
 
     def test_corrupt_state_does_not_crash(self):
         with tempfile.TemporaryDirectory() as td:
