@@ -45,4 +45,4 @@ device:
 model_ready_export:
   enabled: true
   output_dir: data/model_ready
-  max_abs_mv: 10000.0
+  max_abs_mv: 10.0
