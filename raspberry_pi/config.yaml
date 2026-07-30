@@ -1,5 +1,5 @@
 serial:
-  port: /dev/ttyUSB0
+  port: /dev/ttyACM0
   baudrate: 115200
   timeout_seconds: 0.1
   read_size_bytes: 1024
@@ -39,10 +39,10 @@ runtime:
   launch_ecg_viewer: true
 
 device:
-  device_id: esp32dev_dummy
-  state: stored
+  device_id: device01
+  state: testing
 
 model_ready_export:
-  enabled: false
+  enabled: true
   output_dir: data/model_ready
-  max_abs_mv: 10.0
+  max_abs_mv: 10000.0
