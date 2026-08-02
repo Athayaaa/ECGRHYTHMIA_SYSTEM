@@ -9,37 +9,39 @@ import stat as stat_module
 from typing import Any, Iterable
 
 import numpy as np
-from PyQt6.QtCore import (
-    QSettings,
-    QSignalBlocker,
-    QStandardPaths,
-    QTimer,
-    Qt,
-    QUrl,
-)
-from PyQt6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
-from PyQt6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFrame,
-    QHeaderView,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QSizePolicy,
-    QSplitter,
-    QStatusBar,
-    QTableWidget,
-    QTableWidgetItem,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
-)
+
+from .qt_compat import QtCore, QtGui, QtWidgets
+
+QSettings = QtCore.QSettings
+QSignalBlocker = QtCore.QSignalBlocker
+QStandardPaths = QtCore.QStandardPaths
+QTimer = QtCore.QTimer
+Qt = QtCore.Qt
+QUrl = QtCore.QUrl
+QAction = QtGui.QAction
+QCloseEvent = QtGui.QCloseEvent
+QDesktopServices = QtGui.QDesktopServices
+QKeySequence = QtGui.QKeySequence
+QApplication = QtWidgets.QApplication
+QCheckBox = QtWidgets.QCheckBox
+QComboBox = QtWidgets.QComboBox
+QDoubleSpinBox = QtWidgets.QDoubleSpinBox
+QFileDialog = QtWidgets.QFileDialog
+QFrame = QtWidgets.QFrame
+QHeaderView = QtWidgets.QHeaderView
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QMainWindow = QtWidgets.QMainWindow
+QMessageBox = QtWidgets.QMessageBox
+QPushButton = QtWidgets.QPushButton
+QSizePolicy = QtWidgets.QSizePolicy
+QSplitter = QtWidgets.QSplitter
+QStatusBar = QtWidgets.QStatusBar
+QTableWidget = QtWidgets.QTableWidget
+QTableWidgetItem = QtWidgets.QTableWidgetItem
+QTabWidget = QtWidgets.QTabWidget
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 from .display_filters import apply_notch_filter_50hz, start_each_lead_at_zero
 from .ecg_plot_widget import ECGPlotWidget

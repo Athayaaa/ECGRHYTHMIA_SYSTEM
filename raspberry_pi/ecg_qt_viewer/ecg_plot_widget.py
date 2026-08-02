@@ -9,7 +9,7 @@ import time
 from typing import Callable, Sequence
 
 import numpy as np
-from PyQt6 import QtCore, QtGui, QtWidgets
+from .qt_compat import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
 from .ecg_grid_item import ECGGridItem, calculate_grid_spacing

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import math
 from typing import Iterator
 
-from PyQt6 import QtCore, QtGui
+from .qt_compat import QtCore, QtGui
 import pyqtgraph as pg
 
 

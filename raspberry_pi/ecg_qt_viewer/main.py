@@ -8,10 +8,12 @@ import os
 from pathlib import Path
 import sys
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QApplication
+from .qt_compat import QtCore, QtWidgets
 
 from .main_window import MainWindow
+
+QTimer = QtCore.QTimer
+QApplication = QtWidgets.QApplication
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from .qt_compat import QtCore, QtGui, QtWidgets
 
 
 ORGANIZATION_NAME = "ECGRHYTHMIA"

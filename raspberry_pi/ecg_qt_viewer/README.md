@@ -1,4 +1,4 @@
-# ECGRHYTHMIA PyQt6 ECG Viewer
+# ECGRHYTHMIA Qt ECG Viewer
 
 Standalone desktop viewer for ECGRHYTHMIA ECG frames. Supports both **Raw ADC** and 
 **Calibrated mV** display modes. It reads existing `frame_*.npy` (raw) or 
@@ -17,7 +17,26 @@ python3.10 -m venv venv_gui
 source venv_gui/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r ecg_qt_viewer/requirements.txt
+python -m pip install PyQt6
 ```
+
+### Ubuntu 22.04 (Jammy) on Raspberry Pi
+
+Jammy does not provide the `python3-pyqt6` package. The viewer automatically
+uses the supported PyQt5 system package instead:
+
+```bash
+sudo apt update
+sudo apt install -y python3-pyqt5
+
+cd /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' venv/pyvenv.cfg
+source venv/bin/activate
+python -m pip install -r ecg_qt_viewer/requirements.txt
+python -c "from PyQt5.QtWidgets import QApplication; print('PyQt5: OK')"
+```
+
+The receiver uses `venv`, so do not create `venv_gui` for this Jammy setup.
 
 ## Launch
 
@@ -248,9 +267,8 @@ Ubuntu:
 
 Raspberry Pi:
 
-- Use the 64-bit Raspberry Pi OS desktop when possible and install PyQt6 wheels
-  inside `venv_gui`. If a wheel is unavailable, install the OS Qt6 runtime and
-  build prerequisites before retrying pip.
+- On Ubuntu 22.04 (Jammy), install `python3-pyqt5` with `apt`; do not run
+  `pip install PyQt6`, which would attempt a slow source build.
 - OpenGL/remote-desktop issues can often be diagnosed with
   `QT_OPENGL=software python -m ecg_qt_viewer.main`.
 - A missing JSON sidecar is a warning. A corrupt NPY, invalid shape, or NaN/Inf

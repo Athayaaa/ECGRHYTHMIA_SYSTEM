@@ -16,7 +16,12 @@ from typing import Iterable
 from .frame_repository import FrameRecord, FrameRepository
 
 try:  # Keep the pure stability helper testable before GUI dependencies install.
-    from PyQt6.QtCore import QFileSystemWatcher, QObject, QTimer, pyqtSignal
+    from .qt_compat import QtCore
+
+    QFileSystemWatcher = QtCore.QFileSystemWatcher
+    QObject = QtCore.QObject
+    QTimer = QtCore.QTimer
+    pyqtSignal = QtCore.pyqtSignal
 
     QT_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised only without GUI dependencies
@@ -440,11 +445,11 @@ if QT_AVAILABLE:
 else:
 
     class FrameWatcher:  # pragma: no cover - only a dependency error boundary
-        """Dependency error boundary used when PyQt6 has not been installed."""
+        """Dependency error boundary used when no Qt binding has been installed."""
 
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError(
-                "PyQt6 is required for FrameWatcher; install "
+                "PyQt6 or PyQt5 is required for FrameWatcher; install "
                 "ecg_qt_viewer/requirements.txt in the GUI virtual environment."
             )
 

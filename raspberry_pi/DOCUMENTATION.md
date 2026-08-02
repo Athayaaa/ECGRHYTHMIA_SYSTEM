@@ -185,9 +185,17 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. venv_gui (ECG Qt Viewer - PyQt6)
+# 2. venv_gui (ECG Qt Viewer - laptop/desktop)
 python3.10 -m venv venv_gui
 source venv_gui/bin/activate
+pip install -r ecg_qt_viewer/requirements.txt
+pip install PyQt6
+
+# Ubuntu 22.04 (Jammy) Raspberry Pi: gunakan PyQt5 paket sistem di venv utama.
+# Jangan jalankan `pip install PyQt6` pada Raspi Jammy.
+sudo apt install -y python3-pyqt5
+sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' venv/pyvenv.cfg
+source venv/bin/activate
 pip install -r ecg_qt_viewer/requirements.txt
 
 # 3. venv_ai (AI engine - LiteRT)
@@ -544,7 +552,9 @@ offset_count:
 
 ## 9. ECG Qt Viewer (Desktop GUI)
 
-GUI desktop berbasis PyQt6 untuk visualisasi sinyal ECG secara real-time.
+GUI desktop untuk visualisasi sinyal ECG secara real-time. Viewer memakai
+PyQt6 pada desktop/laptop dan otomatis kompatibel dengan PyQt5 paket Ubuntu
+22.04 pada Raspberry Pi.
 
 ### Instalasi
 
@@ -553,6 +563,19 @@ cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 python3.10 -m venv venv_gui
 source venv_gui/bin/activate
 pip install -r ecg_qt_viewer/requirements.txt
+pip install PyQt6
+```
+
+Untuk Raspberry Pi dengan Ubuntu 22.04 (Jammy), pakai `venv` receiver agar
+GUI yang dibuka otomatis oleh `receiver.py` memakai interpreter yang sama:
+
+```bash
+sudo apt install -y python3-pyqt5
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' venv/pyvenv.cfg
+source venv/bin/activate
+pip install -r ecg_qt_viewer/requirements.txt
+python -c "from PyQt5.QtWidgets import QApplication; print('PyQt5: OK')"
 ```
 
 ### Menjalankan
