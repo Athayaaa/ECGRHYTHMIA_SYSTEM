@@ -9,7 +9,7 @@ open serial ports, run inference, or modify ECG/prediction source files.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import hashlib
 from io import BytesIO
@@ -19,13 +19,22 @@ import math
 import os
 from pathlib import Path
 import re
+import queue
 import socket
 import ssl
+import subprocess
 import tempfile
+import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
+
+from session_manager import (
+    SessionPaths,
+    create_recording_session,
+    finish_recording_session,
+)
 
 try:
     import psutil
@@ -47,6 +56,10 @@ CHANNEL_ORDER = ["Lead I", "Lead II", "Lead III"]
 DEFAULT_PORT = 1883
 DEFAULT_QOS = 1
 DEFAULT_POLL_INTERVAL_S = 0.5
+DEFAULT_SERVICE_TIMEOUT_S = 8.0
+RECEIVER_SERVICE = "ecgrhythmia-receiver.service"
+AI_SERVICE = "ecgrhythmia-ai.service"
+RECORDING_STATES = ("IDLE", "STARTING", "RECORDING", "STOPPING", "ERROR")
 PAYLOAD_FORMAT_JSON = "json"
 PAYLOAD_FORMAT_NPY = "npy"
 PAYLOAD_FORMATS = (PAYLOAD_FORMAT_JSON, PAYLOAD_FORMAT_NPY)
@@ -57,6 +70,8 @@ ABSOLUTE_PATH_PATTERN = re.compile(r"(^/)|([A-Za-z]:\\)")
 
 LOGGER = logging.getLogger("mqtt_publisher")
 SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_RUNTIME_ENV_PATH = SCRIPT_DIR / "runtime" / "current_session.env"
+DEFAULT_SESSIONS_ROOT = SCRIPT_DIR / "data" / "sessions"
 THERMAL_ZONE_PATH = Path("/sys/class/thermal/thermal_zone0/temp")
 WIRELESS_STATUS_PATH = Path("/proc/net/wireless")
 
@@ -102,6 +117,7 @@ class PublisherConfig:
     topic: str = "ecgrhythmia/device01/frame"
     device_id: str = "device01"
     username: str | None = None
+    username_env: str | None = None
     password_env: str | None = None
     client_id: str | None = None
     tls: bool = False
@@ -120,6 +136,13 @@ class PublisherConfig:
     json_topic_exact: bool = False
     frame_id: str | None = None
     force_republish: bool = False
+    controller: bool = False
+    command_topic: str | None = None
+    sessions_root: Path = DEFAULT_SESSIONS_ROOT
+    runtime_env_path: Path = DEFAULT_RUNTIME_ENV_PATH
+    receiver_service: str = RECEIVER_SERVICE
+    ai_service: str = AI_SERVICE
+    service_timeout: float = DEFAULT_SERVICE_TIMEOUT_S
 
 
 class SystemTelemetry:
@@ -370,6 +393,31 @@ class MqttConnection:
         self.client = client
         self.connected = False
         self.last_publish_latency_ms: float | None = None
+        self.on_connect: Any | None = None
+        self.on_disconnect: Any | None = None
+        self.on_message: Any | None = None
+
+    def set_callbacks(
+        self,
+        *,
+        on_connect: Any | None = None,
+        on_disconnect: Any | None = None,
+        on_message: Any | None = None,
+    ) -> None:
+        self.on_connect = on_connect
+        self.on_disconnect = on_disconnect
+        self.on_message = on_message
+        self._configure_callbacks()
+
+    def _configure_callbacks(self) -> None:
+        if self.client is None:
+            return
+        if self.on_connect is not None:
+            self.client.on_connect = self.on_connect
+        if self.on_disconnect is not None:
+            self.client.on_disconnect = self.on_disconnect
+        if self.on_message is not None:
+            self.client.on_message = self.on_message
 
     def connect(self) -> None:
         if self.connected:
@@ -384,6 +432,7 @@ class MqttConnection:
                 )
             except (AttributeError, TypeError):
                 self.client = mqtt.Client(client_id=self.config.client_id)
+        self._configure_callbacks()
 
         if self.config.tls:
             LOGGER.info("Connecting to HiveMQ Cloud")
@@ -396,9 +445,10 @@ class MqttConnection:
             context.check_hostname = True
             self.client.tls_set_context(context)
 
+        username = resolve_username(self.config)
         password = resolve_password(self.config)
-        if self.config.username is not None:
-            self.client.username_pw_set(self.config.username, password)
+        if username is not None:
+            self.client.username_pw_set(username, password)
 
         try:
             result = self.client.connect(self.config.broker, self.config.port)
@@ -408,6 +458,9 @@ class MqttConnection:
             raise RuntimeError(describe_connect_rc(result))
         if hasattr(self.client, "loop_start"):
             self.client.loop_start()
+        reconnect_delay_set = getattr(self.client, "reconnect_delay_set", None)
+        if callable(reconnect_delay_set):
+            reconnect_delay_set(min_delay=1, max_delay=30)
         self.connected = True
         LOGGER.info("Connected to broker")
 
@@ -485,13 +538,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Publish calibrated ECG mV frames and AI predictions over MQTT",
     )
-    parser.add_argument("--ecg-dir", type=Path, required=True)
-    parser.add_argument("--prediction-dir", type=Path, required=True)
+    parser.add_argument("--ecg-dir", type=Path)
+    parser.add_argument("--prediction-dir", type=Path)
     parser.add_argument("--broker", required=True)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--topic", required=True)
+    parser.add_argument("--topic", "--publish-topic", dest="topic", required=True)
     parser.add_argument("--device-id", required=True)
     parser.add_argument("--username")
+    parser.add_argument("--username-env")
     parser.add_argument("--password-env")
     parser.add_argument("--client-id")
     parser.add_argument("--tls", action="store_true")
@@ -522,6 +576,30 @@ def build_parser() -> argparse.ArgumentParser:
     mode_group.add_argument("--follow", action="store_true")
     mode_group.add_argument("--once", action="store_true")
     parser.add_argument(
+        "--controller",
+        action="store_true",
+        help="Run the persistent MQTT START/STOP controller instead of a standalone scan",
+    )
+    parser.add_argument(
+        "--command-topic",
+        help="MQTT topic that receives non-retained START and STOP commands",
+    )
+    parser.add_argument(
+        "--sessions-root",
+        type=Path,
+        default=Path("data/sessions"),
+        help="Session root used by controller mode",
+    )
+    parser.add_argument(
+        "--runtime-env-path",
+        type=Path,
+        default=Path("runtime/current_session.env"),
+        help="Runtime environment file consumed by receiver and AI services",
+    )
+    parser.add_argument("--receiver-service", default=RECEIVER_SERVICE)
+    parser.add_argument("--ai-service", default=AI_SERVICE)
+    parser.add_argument("--service-timeout", type=float, default=DEFAULT_SERVICE_TIMEOUT_S)
+    parser.add_argument(
         "--stress-test",
         action="store_true",
         help="Mark each payload as part of a system stress-test run",
@@ -533,8 +611,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_config(args: argparse.Namespace) -> PublisherConfig:
-    ecg_dir = resolve_path(args.ecg_dir)
-    prediction_dir = resolve_path(args.prediction_dir)
+    controller = bool(args.controller or (args.ecg_dir is None and args.prediction_dir is None))
+    if (args.ecg_dir is None) != (args.prediction_dir is None):
+        raise ValueError("--ecg-dir and --prediction-dir must be supplied together")
+    if not controller and args.ecg_dir is None:
+        raise ValueError("--ecg-dir and --prediction-dir are required outside controller mode")
+    ecg_dir = resolve_path(args.ecg_dir) if args.ecg_dir is not None else DEFAULT_SESSIONS_ROOT
+    prediction_dir = (
+        resolve_path(args.prediction_dir)
+        if args.prediction_dir is not None
+        else DEFAULT_SESSIONS_ROOT
+    )
     once = args.once or not args.follow
     poll_interval = max(0.1, float(args.poll_interval))
     state_path = (
@@ -544,7 +631,7 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
     )
     ca_cert = resolve_path(args.ca_cert) if args.ca_cert is not None else None
     client_id = args.client_id or f"ecgrhythmia-{sanitize_id(args.device_id)}-publisher"
-    return PublisherConfig(
+    config = PublisherConfig(
         ecg_dir=ecg_dir,
         prediction_dir=prediction_dir,
         broker=args.broker,
@@ -552,6 +639,7 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
         topic=args.topic,
         device_id=args.device_id,
         username=args.username,
+        username_env=args.username_env,
         password_env=args.password_env,
         client_id=client_id,
         tls=args.tls,
@@ -569,7 +657,18 @@ def resolve_config(args: argparse.Namespace) -> PublisherConfig:
         json_topic_exact=args.json_topic_exact,
         frame_id=str(args.frame_id).zfill(6) if args.frame_id else None,
         force_republish=args.force_republish,
+        controller=controller,
+        command_topic=args.command_topic or f"{normalize_base_topic(args.topic)}/command",
+        sessions_root=resolve_path(args.sessions_root),
+        runtime_env_path=resolve_path(args.runtime_env_path),
+        receiver_service=args.receiver_service,
+        ai_service=args.ai_service,
+        service_timeout=max(0.5, float(args.service_timeout)),
     )
+    # Fail before opening a socket if a configured credential is absent.
+    resolve_username(config)
+    resolve_password(config)
+    return config
 
 
 def resolve_path(path: Path) -> Path:
@@ -620,17 +719,29 @@ def configure_logging(level_name: str) -> None:
     )
 
 
+def resolve_username(config: PublisherConfig) -> str | None:
+    if config.username is not None and config.username_env is not None:
+        raise RuntimeError("use either --username or --username-env, not both")
+    if config.username_env is None:
+        return config.username
+    username = os.environ.get(config.username_env)
+    if not username:
+        raise RuntimeError(f"environment variable {config.username_env!r} is not set")
+    return username
+
+
 def resolve_password(config: PublisherConfig) -> str | None:
-    if config.username is None and config.password_env is None:
+    username = resolve_username(config)
+    if username is None and config.password_env is None:
         if config.tls and config.broker.endswith(".hivemq.cloud"):
             raise RuntimeError(
-                "HiveMQ Cloud requires --username and --password-env"
+                "HiveMQ Cloud requires --username-env and --password-env"
             )
         return None
-    if config.username is None:
-        raise RuntimeError("--username is required when --password-env is used")
+    if username is None:
+        raise RuntimeError("--username or --username-env is required when --password-env is used")
     if config.password_env is None:
-        raise RuntimeError("--password-env is required when --username is used")
+        raise RuntimeError("--password-env is required when a username is used")
 
     password = os.environ.get(config.password_env)
     if password is None:
@@ -1127,6 +1238,7 @@ def scan_once(
     state: PublishState,
     connection: MqttConnection | None,
     telemetry: SystemTelemetry | None = None,
+    should_publish: Callable[[], bool] | None = None,
 ) -> ScanStats:
     stats = ScanStats()
     telemetry = telemetry or SystemTelemetry()
@@ -1134,6 +1246,8 @@ def scan_once(
     payload_format = config.payload_format
     state_topic = state_topic_scope(config)
     for frame_id, ecg_path in frames:
+        if should_publish is not None and not should_publish():
+            break
         if config.frame_id is not None and frame_id != config.frame_id:
             continue
         try:
@@ -1258,6 +1372,8 @@ def scan_once(
             continue
 
         try:
+            if should_publish is not None and not should_publish():
+                break
             if connection is None:
                 raise RuntimeError("MQTT connection is not available")
             LOGGER.info("Frame %s ready", prepared.frame_id)
@@ -1346,10 +1462,311 @@ def run_publisher(config: PublisherConfig, client: Any | None = None) -> ScanSta
             connection.close()
 
 
+def write_runtime_env(path: Path, paths: SessionPaths) -> None:
+    """Atomically publish the active session paths for the worker services."""
+    values = {
+        "SESSION_ID": paths.session_id,
+        "SESSION_DIR": str(paths.root),
+        "RAW_ADC_DIR": str(paths.raw_adc),
+        "CALIBRATED_DIR": str(paths.calibrated),
+        "FILTERED_DIR": str(paths.filtered),
+        "MODEL_READY_DIR": str(paths.model_ready),
+        "PREDICTION_DIR": str(paths.predictions),
+        "LOG_DIR": str(paths.logs),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".current_session_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for key, value in values.items():
+                # systemd EnvironmentFile values do not need shell quoting for
+                # these generated paths, which cannot contain a newline.
+                handle.write(f"{key}={value}\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+class ControllerServiceManager:
+    """Small, bounded systemd user-service adapter used outside MQTT callbacks."""
+
+    def __init__(self, timeout: float = DEFAULT_SERVICE_TIMEOUT_S) -> None:
+        self.timeout = timeout
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["systemctl", "--user", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=self.timeout,
+            check=False,
+        )
+
+    def start(self, service: str) -> bool:
+        return self._run("start", service).returncode == 0
+
+    def stop(self, service: str) -> bool:
+        return self._run("stop", service).returncode == 0
+
+    def is_active(self, service: str) -> bool:
+        return self._run("is-active", "--quiet", service).returncode == 0
+
+    def wait_until_active(self, service: str) -> bool:
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            if self.is_active(service):
+                return True
+            time.sleep(0.1)
+        return self.is_active(service)
+
+
+class MqttController:
+    """Own the recording session lifecycle while MQTT callbacks stay non-blocking."""
+
+    def __init__(
+        self,
+        config: PublisherConfig,
+        *,
+        client: Any | None = None,
+        services: ControllerServiceManager | None = None,
+    ) -> None:
+        if not config.command_topic:
+            raise ValueError("command topic is required in controller mode")
+        self.config = config
+        self.services = services or ControllerServiceManager(config.service_timeout)
+        self.connection = MqttConnection(config, client=client)
+        self.connection.set_callbacks(
+            on_connect=self.on_connect,
+            on_disconnect=self.on_disconnect,
+            on_message=self.on_message,
+        )
+        self.events: queue.Queue[str] = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._recording_state = "IDLE"
+        self._is_publishing = False
+        self._active_session: SessionPaths | None = None
+        self._publish_config: PublisherConfig | None = None
+        self._publish_state: PublishState | None = None
+        self._telemetry = SystemTelemetry()
+
+    @property
+    def recording_state(self) -> str:
+        with self._state_lock:
+            return self._recording_state
+
+    @property
+    def is_publishing(self) -> bool:
+        with self._state_lock:
+            return self._is_publishing
+
+    @property
+    def active_session(self) -> SessionPaths | None:
+        with self._state_lock:
+            return self._active_session
+
+    def _set_state(self, state: str, *, publishing: bool | None = None) -> None:
+        if state not in RECORDING_STATES:
+            raise ValueError(f"unsupported recording state: {state}")
+        with self._state_lock:
+            self._recording_state = state
+            if publishing is not None:
+                self._is_publishing = publishing
+        LOGGER.info("State: %s", state)
+
+    def on_connect(self, client: Any, *_args: Any) -> None:
+        self.connection.connected = True
+        LOGGER.info("MQTT controller connected")
+        self._subscribe(client)
+
+    def on_disconnect(self, _client: Any, *_args: Any) -> None:
+        self.connection.connected = False
+        LOGGER.warning("MQTT controller disconnected; reconnecting with client backoff")
+
+    def _subscribe(self, client: Any | None = None) -> None:
+        mqtt_client = client or self.connection.client
+        if mqtt_client is None:
+            return
+        subscribe = getattr(mqtt_client, "subscribe", None)
+        if not callable(subscribe):
+            raise RuntimeError("MQTT client does not support subscribe")
+        result = subscribe(self.config.command_topic, qos=DEFAULT_QOS)
+        rc = result[0] if isinstance(result, tuple) else getattr(result, "rc", 0)
+        if rc not in (0, None):
+            raise RuntimeError(f"MQTT command subscribe failed with rc={rc}")
+        LOGGER.info("Subscribed: %s", self.config.command_topic)
+
+    def on_message(self, _client: Any, _userdata: Any, message: Any) -> None:
+        """MQTT network callback: validate then enqueue only, never start work."""
+        if bool(getattr(message, "retain", False)):
+            LOGGER.info("Retained command ignored")
+            return
+        payload = getattr(message, "payload", b"")
+        try:
+            command = bytes(payload).decode("utf-8").strip().upper()
+        except (UnicodeDecodeError, TypeError, ValueError):
+            LOGGER.info("Unknown command ignored: invalid UTF-8")
+            return
+        if command not in ("START", "STOP"):
+            LOGGER.info("Unknown command ignored: %s", command[:64])
+            return
+        self.events.put(command)
+
+    def start_recording(self) -> None:
+        if self.recording_state != "IDLE":
+            LOGGER.info("START ignored: already recording")
+            return
+        self._set_state("STARTING", publishing=False)
+        paths: SessionPaths | None = None
+        try:
+            paths = create_recording_session(self.config.sessions_root)
+            write_runtime_env(self.config.runtime_env_path, paths)
+            LOGGER.info("Session created: %s", paths.session_id)
+
+            if not self.services.start(self.config.receiver_service):
+                raise RuntimeError("receiver service could not be started")
+            if not self.services.wait_until_active(self.config.receiver_service):
+                raise RuntimeError("receiver service did not become active")
+            LOGGER.info("Receiver started")
+
+            if not self.services.start(self.config.ai_service):
+                raise RuntimeError("AI worker service could not be started")
+            if not self.services.wait_until_active(self.config.ai_service):
+                raise RuntimeError("AI worker service did not become active")
+            LOGGER.info("AI worker started")
+
+            publish_config = replace(
+                self.config,
+                ecg_dir=paths.calibrated,
+                prediction_dir=paths.predictions,
+                state_path=paths.predictions / "mqtt_publish_state.json",
+                once=False,
+                follow=True,
+            )
+            with self._state_lock:
+                self._active_session = paths
+                self._publish_config = publish_config
+                self._publish_state = PublishState.load(publish_config.state_path)
+            self._set_state("RECORDING", publishing=True)
+            LOGGER.info("Publishing enabled")
+        except Exception as error:
+            LOGGER.error("Unable to start recording: %s", error)
+            self._set_state("ERROR", publishing=False)
+            for service in (self.config.ai_service, self.config.receiver_service):
+                try:
+                    self.services.stop(service)
+                except Exception:
+                    LOGGER.warning("Unable to stop failed %s", service)
+            if paths is not None:
+                try:
+                    finish_recording_session(paths, 0, status="FAILED")
+                except Exception:
+                    LOGGER.warning("Unable to finalize failed session")
+
+    def stop_recording(self) -> None:
+        if self.recording_state == "IDLE":
+            LOGGER.info("STOP ignored: already idle")
+            return
+        if self.recording_state != "RECORDING":
+            LOGGER.info("STOP ignored: controller is %s", self.recording_state)
+            return
+        LOGGER.info("STOP command received")
+        self._set_state("STOPPING", publishing=False)
+        LOGGER.info("Publishing disabled")
+        try:
+            LOGGER.info("Stopping AI worker")
+            if not self.services.stop(self.config.ai_service):
+                raise RuntimeError("AI worker service could not be stopped")
+            LOGGER.info("Stopping receiver")
+            if not self.services.stop(self.config.receiver_service):
+                raise RuntimeError("receiver service could not be stopped")
+            paths = self.active_session
+            if paths is not None:
+                frame_count = len(list(paths.raw_adc.glob("frame_*.json")))
+                finish_recording_session(paths, frame_count, status="STOPPED")
+                LOGGER.info("Session saved")
+            with self._state_lock:
+                self._active_session = None
+                self._publish_config = None
+                self._publish_state = None
+            self._set_state("IDLE", publishing=False)
+            LOGGER.info("Waiting for START command")
+        except Exception as error:
+            LOGGER.error("Unable to stop recording cleanly: %s", error)
+            self._set_state("ERROR", publishing=False)
+
+    def process_events(self) -> None:
+        while True:
+            try:
+                command = self.events.get_nowait()
+            except queue.Empty:
+                return
+            if command == "START":
+                LOGGER.info("START command received")
+                self.start_recording()
+            else:
+                self.stop_recording()
+
+    def scan_active_session(self) -> None:
+        if not self.is_publishing:
+            return
+        with self._state_lock:
+            config = self._publish_config
+            state = self._publish_state
+        if config is None or state is None:
+            return
+        scan_once(
+            config,
+            state=state,
+            connection=self.connection,
+            telemetry=self._telemetry,
+            should_publish=lambda: self.is_publishing and self.events.empty(),
+        )
+
+    def run(self, stop_event: threading.Event | None = None) -> int:
+        self._telemetry.warm_up()
+        self._set_state("IDLE", publishing=False)
+        try:
+            self.connection.connect()
+            # Test clients and a few older paho adapters do not invoke the
+            # connect callback synchronously, so subscribe once explicitly.
+            self._subscribe()
+        except Exception as error:
+            LOGGER.error("MQTT controller connection failed: %s", error)
+            return 1
+        LOGGER.info("Waiting for START command")
+        try:
+            while stop_event is None or not stop_event.is_set():
+                self.process_events()
+                self.scan_active_session()
+                time.sleep(self.config.poll_interval)
+        except KeyboardInterrupt:
+            return 0
+        finally:
+            if self.recording_state == "RECORDING":
+                self.stop_recording()
+            self.connection.close()
+
+
 def main() -> int:
     args = build_parser().parse_args()
-    config = resolve_config(args)
+    try:
+        config = resolve_config(args)
+    except (RuntimeError, ValueError) as error:
+        print(f"configuration error: {error}", file=os.sys.stderr)
+        return 2
     configure_logging(config.log_level)
+    if config.controller:
+        return MqttController(config).run()
     stats = run_publisher(config)
     if config.once and not config.dry_run and stats.errors:
         return 1

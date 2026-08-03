@@ -117,6 +117,7 @@ class MockMqttClient:
         self.connected = False
         self.tls_context = None
         self.tls_insecure = None
+        self.subscriptions = []
 
     def username_pw_set(self, username, password):
         self.username = username
@@ -136,6 +137,10 @@ class MockMqttClient:
 
     def loop_start(self):
         self.loop_started = True
+
+    def subscribe(self, topic, qos):
+        self.subscriptions.append((topic, qos))
+        return (0, len(self.subscriptions))
 
     def publish(self, topic, payload, qos, retain):
         self.published.append((topic, payload, qos, retain))
@@ -1086,6 +1091,169 @@ class HiveMqConnectionTests(TestCase):
             config.state_path.name,
             "mqtt_publish_state_hivemq.json",
         )
+
+
+class FakeControllerServices:
+    def __init__(self):
+        self.active: set[str] = set()
+        self.calls: list[tuple[str, str]] = []
+        self.fail_start: str | None = None
+
+    def start(self, service: str) -> bool:
+        self.calls.append(("start", service))
+        if self.fail_start == service:
+            return False
+        self.active.add(service)
+        return True
+
+    def stop(self, service: str) -> bool:
+        self.calls.append(("stop", service))
+        self.active.discard(service)
+        return True
+
+    def is_active(self, service: str) -> bool:
+        return service in self.active
+
+    def wait_until_active(self, service: str) -> bool:
+        return self.is_active(service)
+
+
+class Message:
+    def __init__(self, payload: bytes, *, retain: bool = False):
+        self.payload = payload
+        self.retain = retain
+
+
+class MqttControllerTests(TestCase):
+    def make_controller(self, root: Path):
+        config = mqtt_publisher.PublisherConfig(
+            ecg_dir=root / "unused_ecg",
+            prediction_dir=root / "unused_predictions",
+            broker="localhost",
+            topic="ecgrhythmia/device01",
+            command_topic="ecgrhythmia/device01/command",
+            device_id="device01",
+            client_id="ecgrhythmia-device01-controller",
+            controller=True,
+            sessions_root=root / "data" / "sessions",
+            runtime_env_path=root / "runtime" / "current_session.env",
+            stable_delay=0,
+        )
+        client = MockMqttClient()
+        services = FakeControllerServices()
+        return mqtt_publisher.MqttController(config, client=client, services=services), client, services
+
+    def test_initial_state_is_idle_and_callback_only_queues_command(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _client, services = self.make_controller(Path(td))
+
+            controller.on_message(None, None, Message(b" start \n"))
+
+            self.assertEqual(controller.recording_state, "IDLE")
+            self.assertFalse(controller.is_publishing)
+            self.assertEqual(services.calls, [])
+            self.assertEqual(controller.events.get_nowait(), "START")
+
+    def test_subscribe_uses_command_topic_qos_one_and_reconnect_subscribes_again(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, client, _services = self.make_controller(Path(td))
+
+            controller.on_connect(client, None, None, 0)
+            controller.on_connect(client, None, None, 0)
+
+            self.assertEqual(
+                client.subscriptions,
+                [
+                    ("ecgrhythmia/device01/command", 1),
+                    ("ecgrhythmia/device01/command", 1),
+                ],
+            )
+
+    def test_unknown_and_retained_commands_are_ignored(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _client, _services = self.make_controller(Path(td))
+
+            controller.on_message(None, None, Message(b"START", retain=True))
+            controller.on_message(None, None, Message(b"pause"))
+            controller.on_message(None, None, Message(b"\xff"))
+
+            self.assertTrue(controller.events.empty())
+            self.assertEqual(controller.recording_state, "IDLE")
+
+    def test_start_creates_session_then_starts_receiver_and_ai(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            controller, _client, services = self.make_controller(root)
+
+            controller.on_message(None, None, Message(b"START"))
+            controller.process_events()
+
+            self.assertEqual(controller.recording_state, "RECORDING")
+            self.assertTrue(controller.is_publishing)
+            self.assertEqual(
+                services.calls,
+                [
+                    ("start", mqtt_publisher.RECEIVER_SERVICE),
+                    ("start", mqtt_publisher.AI_SERVICE),
+                ],
+            )
+            session = controller.active_session
+            self.assertIsNotNone(session)
+            assert session is not None
+            self.assertTrue(session.calibrated.is_dir())
+            self.assertTrue(session.predictions.is_dir())
+            self.assertIn("SESSION_ID=", (root / "runtime" / "current_session.env").read_text())
+
+    def test_second_start_does_not_duplicate_services_or_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _client, services = self.make_controller(Path(td))
+            controller.on_message(None, None, Message(b"START"))
+            controller.process_events()
+            session = controller.active_session
+            controller.on_message(None, None, Message(b"START"))
+            controller.process_events()
+
+            self.assertEqual(controller.active_session, session)
+            self.assertEqual(len(services.calls), 2)
+
+    def test_stop_disables_publish_before_stopping_ai_then_receiver_and_keeps_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _client, services = self.make_controller(Path(td))
+            controller.start_recording()
+            session = controller.active_session
+            assert session is not None
+            (session.raw_adc / "frame_000001.json").write_text("{}", encoding="utf-8")
+            services.calls.clear()
+
+            controller.stop_recording()
+
+            self.assertEqual(controller.recording_state, "IDLE")
+            self.assertFalse(controller.is_publishing)
+            self.assertEqual(
+                services.calls,
+                [
+                    ("stop", mqtt_publisher.AI_SERVICE),
+                    ("stop", mqtt_publisher.RECEIVER_SERVICE),
+                ],
+            )
+            metadata = json.loads(session.metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], "STOPPED")
+            self.assertEqual(metadata["frame_count"], 1)
+
+    def test_scan_uses_only_the_active_session_and_is_gated(self):
+        with tempfile.TemporaryDirectory() as td:
+            controller, _client, _services = self.make_controller(Path(td))
+            with mock.patch.object(mqtt_publisher, "scan_once") as scan:
+                controller.scan_active_session()
+                scan.assert_not_called()
+                controller.start_recording()
+                controller.scan_active_session()
+
+            config = scan.call_args.args[0]
+            session = controller.active_session
+            assert session is not None
+            self.assertEqual(config.ecg_dir, session.calibrated)
+            self.assertEqual(config.prediction_dir, session.predictions)
 
 
 class SafetyTests(TestCase):
