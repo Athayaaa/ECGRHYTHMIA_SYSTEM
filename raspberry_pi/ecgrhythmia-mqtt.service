@@ -10,13 +10,13 @@ WorkingDirectory=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 Environment=MQTT_BROKER=93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud
 Environment=MQTT_PORT=8883
 Environment=MQTT_TOPIC=ecgrhythmia/device01
-Environment=MQTT_COMMAND_TOPIC=ecgrhythmia/device01/command
 Environment=MQTT_DEVICE_ID=device01
-Environment=MQTT_CLIENT_ID=ecgrhythmia-device01-controller
+Environment=MQTT_CLIENT_ID=ecgrhythmia-device01-publisher
 Environment=MQTT_USERNAME_ENV=HIVEMQ_USERNAME
 Environment=MQTT_PASSWORD_ENV=HIVEMQ_PASSWORD
 Environment=MQTT_TLS=1
-Environment=MQTT_JSON_TOPIC_EXACT=0
+Environment=MQTT_JSON_TOPIC_EXACT=1
+EnvironmentFile=-/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/runtime/current_session.env
 EnvironmentFile=-/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/runtime/mqtt_credentials.env
 ExecStart=/bin/bash /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/run_mqtt_service.sh
 Restart=on-failure

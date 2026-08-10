@@ -661,6 +661,11 @@ dalam urutan receiver → AI → MQTT. Saat Stop Recording, urutannya dibalik:
 MQTT → AI → receiver; metadata sesi difinalkan menjadi `STOPPED`. Session dan
 data frame tidak dihapus oleh OLED.
 
+Service MQTT membaca session tersebut saat mulai, lalu langsung mengikuti
+output AI dan mengirim payload JSON ke `ecgrhythmia/device01` setelah pasangan
+frame ECG dan prediction tersedia. Tidak diperlukan command MQTT `START` saat
+session dimulai dari OLED.
+
 OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 
 ### Menjalankan

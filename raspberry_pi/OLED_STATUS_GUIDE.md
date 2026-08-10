@@ -271,6 +271,11 @@ sesuai menu Recording. Jika user service manager belum aktif saat boot:
 loginctl enable-linger athaya
 ```
 
+Saat menu OLED memulai recording, service MQTT membaca
+`runtime/current_session.env` dan langsung mengikuti prediction pada session
+tersebut. Ia tidak menunggu command MQTT `START`; dashboard cukup subscribe ke
+`ecgrhythmia/device01` sebelum frame baru selesai diproses.
+
 ## Status Pages
 
 Halaman utama:

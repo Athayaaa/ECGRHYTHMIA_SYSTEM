@@ -582,6 +582,10 @@ menghentikan MQTT → AI → receiver dan memfinalkan `session.json`; sesi lama
 tidak dihapus. Untuk wiring dan pengaturan service dengan GPIO20, lihat
 `OLED_STATUS_GUIDE.md`.
 
+Service MQTT OLED langsung mengikuti session aktif. Setelah prediction untuk
+frame tersedia, payload JSON dipublish ke `ecgrhythmia/device01`; tidak perlu
+mengirim command MQTT `START` dari website.
+
 ---
 
 ## Tahap 4: Verifikasi Dashboard
