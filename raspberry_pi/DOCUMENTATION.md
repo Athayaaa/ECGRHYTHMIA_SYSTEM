@@ -23,8 +23,9 @@
 15. [Referensi Struktur Folder](#15-referensi-struktur-folder)
 16. [Referensi Semua File](#16-referensi-semua-file)
 17. [Format Data & Protokol](#17-format-data--protokol)
-18. [Troubleshooting](#18-troubleshooting)
-19. [Catatan Penting](#19-catatan-penting)
+18. [Operasional, Status, dan Log Service](#18-operasional-status-dan-log-service)
+19. [Troubleshooting](#19-troubleshooting)
+20. [Catatan Penting](#20-catatan-penting)
 
 ---
 
@@ -1399,7 +1400,141 @@ Offset  Size  Field
 
 ---
 
-## 18. Troubleshooting
+## 18. Operasional, Status, dan Log Service
+
+Semua perintah berikut dijalankan di Raspberry Pi. Perintah `journalctl` dengan
+`-f` memantau log secara realtime; keluar dengan `Ctrl+C`.
+
+### Status Semua Service
+
+```bash
+systemctl --user status ecgrhythmia-oled.service --no-pager -l
+systemctl --user status ecgrhythmia-receiver.service --no-pager -l
+systemctl --user status ecgrhythmia-ai.service --no-pager -l
+systemctl --user status ecgrhythmia-mqtt.service --no-pager -l
+
+# Hanya tampilkan service user yang gagal.
+systemctl --user --failed
+```
+
+Untuk hasil singkat, gunakan `is-active`. Output `active` berarti service
+sedang berjalan.
+
+```bash
+systemctl --user is-active ecgrhythmia-oled.service
+systemctl --user is-active ecgrhythmia-receiver.service
+systemctl --user is-active ecgrhythmia-ai.service
+systemctl --user is-active ecgrhythmia-mqtt.service
+```
+
+### Kontrol Service
+
+Ganti `<service>` dengan salah satu nama: `oled`, `receiver`, `ai`, atau
+`mqtt`.
+
+```bash
+systemctl --user start ecgrhythmia-<service>.service
+systemctl --user stop ecgrhythmia-<service>.service
+systemctl --user restart ecgrhythmia-<service>.service
+```
+
+Contoh restart AI worker:
+
+```bash
+systemctl --user restart ecgrhythmia-ai.service
+systemctl --user status ecgrhythmia-ai.service --no-pager -l
+```
+
+### Log Service
+
+Pantau satu service secara realtime:
+
+```bash
+journalctl --user -u ecgrhythmia-oled.service -f
+journalctl --user -u ecgrhythmia-receiver.service -f
+journalctl --user -u ecgrhythmia-ai.service -f
+journalctl --user -u ecgrhythmia-mqtt.service -f
+```
+
+Pantau seluruh pipeline akuisisi, inferensi, dan publish sekaligus:
+
+```bash
+journalctl --user -f \
+  -u ecgrhythmia-receiver.service \
+  -u ecgrhythmia-ai.service \
+  -u ecgrhythmia-mqtt.service
+```
+
+Tampilkan 100 baris terakhir sejak boot terakhir (`-b`) tanpa mode realtime:
+
+```bash
+journalctl --user -u ecgrhythmia-receiver.service -b -n 100 --no-pager
+journalctl --user -u ecgrhythmia-ai.service -b -n 100 --no-pager
+journalctl --user -u ecgrhythmia-mqtt.service -b -n 100 --no-pager
+journalctl --user -u ecgrhythmia-oled.service -b -n 100 --no-pager
+```
+
+### Serial ESP32
+
+```bash
+# Port yang tersedia.
+ls -l /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
+
+# Proses yang sedang memegang port serial.
+lsof /dev/ttyACM0
+
+# Pastikan user tergabung dalam grup serial.
+groups
+```
+
+### Status Session dan Tahap Pipeline
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+source runtime/current_session.env
+
+echo "$SESSION_DIR"
+find "$SESSION_DIR/raw_adc" -name 'frame_*.npy' | wc -l
+find "$SESSION_DIR/calibrated" -name 'frame_*_mv.npy' | wc -l
+find "$SESSION_DIR/model_ready" -name 'frame_*_input.npy' | wc -l
+find "$SESSION_DIR/predictions" -name 'frame_*_prediction.json' | wc -l
+```
+
+Lihat file terbaru pada setiap tahap:
+
+```bash
+ls -lt "$SESSION_DIR/raw_adc" | head
+ls -lt "$SESSION_DIR/calibrated" | head
+ls -lt "$SESSION_DIR/model_ready" | head
+ls -lt "$SESSION_DIR/predictions" | head
+```
+
+### Disk, Filesystem, dan Jaringan
+
+Gunakan bagian ini terutama bila export frame berhenti, muncul `Input/output
+error`, atau MQTT tidak tersambung.
+
+```bash
+# Kapasitas disk dan mode mount root filesystem.
+df -h
+findmnt -no SOURCE,OPTIONS /
+
+# Error SD card/filesystem sejak boot saat ini.
+dmesg -T | rg -i 'I/O error|ext4|mmc|read-only|remount'
+
+# Alamat jaringan, status WiFi, dan koneksi internet dasar.
+ip addr show
+iw dev wlan0 link
+ping -c 4 1.1.1.1
+```
+
+> Jangan menjalankan `fsck` pada root filesystem yang sedang mounted. Bila
+> root berubah menjadi `read-only` atau muncul banyak `I/O error`, hentikan
+> penulisan data dan periksa SD card/storage dari perangkat lain.
+
+---
+
+## 19. Troubleshooting
 
 ### ESP32 Tidak Mengirim Data
 
@@ -1443,16 +1578,24 @@ Offset  Size  Field
 
 ### Qt Viewer Tidak Muncul
 
-1. Pastikan `venv_gui` terinstall:
+1. Pada laptop/desktop, pastikan PyQt6 di `venv_gui` tersedia:
    ```bash
    source venv_gui/bin/activate
    python -c "import PyQt6; print('OK')"
    ```
-2. Ubuntu: install paket XCB:
+2. Pada Raspberry Pi dengan Ubuntu 22.04 (Jammy), viewer menggunakan paket
+   PyQt5 sistem melalui `venv` receiver:
+   ```bash
+   sudo apt install -y python3-pyqt5
+   sed -i 's/include-system-site-packages = false/include-system-site-packages = true/' venv/pyvenv.cfg
+   source venv/bin/activate
+   python -c "from PyQt5.QtWidgets import QApplication; print('PyQt5: OK')"
+   ```
+3. Ubuntu: install paket XCB bila GUI masih gagal membuka window:
    ```bash
    sudo apt install libxcb-cursor0 libxkbcommon-x11-0
    ```
-3. Coba mode offscreen:
+4. Coba mode offscreen:
    ```bash
    QT_QPA_PLATFORM=offscreen python -m ecg_qt_viewer.main
    ```
@@ -1497,7 +1640,7 @@ rm data/predictions_prosim_test/mqtt_publish_state_hivemq.json
 
 ---
 
-## 19. Catatan Penting
+## 20. Catatan Penting
 
 > [!CAUTION]
 > **Keselamatan Listrik**
