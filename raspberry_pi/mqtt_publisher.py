@@ -1558,6 +1558,9 @@ class MqttController:
         self._publish_config: PublisherConfig | None = None
         self._publish_state: PublishState | None = None
         self._telemetry = SystemTelemetry()
+        self.controller_state_path = (
+            self.config.runtime_env_path.parent / "mqtt_controller_state.json"
+        )
 
     @property
     def recording_state(self) -> str:
@@ -1582,6 +1585,44 @@ class MqttController:
             if publishing is not None:
                 self._is_publishing = publishing
         LOGGER.info("State: %s", state)
+        self._write_controller_state()
+
+    def _write_controller_state(self) -> None:
+        """Expose remote-controller state for the local OLED without IPC calls."""
+        with self._state_lock:
+            state = self._recording_state
+            publishing = self._is_publishing
+            session = self._active_session
+        payload = {
+            "source": "mqtt_remote",
+            "state": state,
+            "publishing": publishing,
+            "session_id": session.session_id if session is not None else None,
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        path = self.controller_state_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(path.parent), prefix=".mqtt_controller_state_", suffix=".tmp"
+            )
+        except OSError as error:
+            LOGGER.warning("Unable to prepare remote controller status: %s", error)
+            return
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_name, 0o600)
+            os.replace(tmp_name, path)
+        except OSError as error:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            LOGGER.warning("Unable to write remote controller status: %s", error)
 
     def on_connect(self, client: Any, *_args: Any) -> None:
         self.connection.connected = True

@@ -42,6 +42,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 RUNTIME_DIR = SCRIPT_DIR / "runtime"
 CURRENT_SESSION_ENV = RUNTIME_DIR / "current_session.env"
+MQTT_CONTROLLER_STATE_PATH = RUNTIME_DIR / "mqtt_controller_state.json"
 OLED_SETTINGS_PATH = RUNTIME_DIR / "oled_settings.json"
 DEFAULT_SESSION_ROOT = SCRIPT_DIR / "data" / "sessions"
 CALIBRATION_CONFIG_PATH = SCRIPT_DIR / "calibration_config.yaml"
@@ -244,6 +245,18 @@ def _read_json(path: Path) -> Optional[dict]:
         return data if isinstance(data, dict) else None
     except (json.JSONDecodeError, OSError, ValueError):
         return None
+
+
+def get_remote_controller_state() -> tuple[str, str]:
+    """Return the status written by the persistent MQTT remote controller."""
+    data = _read_json(MQTT_CONTROLLER_STATE_PATH)
+    if not data or data.get("source") != "mqtt_remote":
+        return ("IDLE", NA)
+    state = str(data.get("state", "IDLE")).upper()
+    if state not in {"IDLE", "STARTING", "RECORDING", "STOPPING", "ERROR"}:
+        return ("IDLE", NA)
+    session_id = data.get("session_id")
+    return (state, str(session_id) if session_id else NA)
 
 
 def _sorted_by_index_desc(files):
@@ -477,6 +490,8 @@ class StatusSnapshot:
     uptime_seconds: Optional[int] = None
     ai: str = "STOPPED"
     mqtt: str = "STOPPED"
+    remote_mqtt: str = "IDLE"
+    remote_session_id: str = NA
     receiver: str = "OFF"
     net: str = "--"
     ip_address: str = NA
@@ -501,6 +516,7 @@ def build_snapshot(args, prev: Optional[StatusSnapshot], booted: bool) -> Status
     cal_meta = find_latest_calibrated_meta(root)
     recv = get_receiver_status()
     env = read_key_value_env(CURRENT_SESSION_ENV)
+    snap.remote_mqtt, snap.remote_session_id = get_remote_controller_state()
 
     snap.session_id = env.get("SESSION_ID", NA)
     if env.get("SESSION_DIR"):
@@ -1245,7 +1261,21 @@ def render_main_lines(snap: StatusSnapshot) -> list[str]:
             snap.error_cause[:OLED_TEXT_CHARS],
             "Press: Menu",
         ]
+    if snap.remote_mqtt == "STARTING":
+        return [
+            "ECGRHYTHMIA",
+            "REMOTE START",
+            "Starting services",
+            "Press: Menu",
+        ]
     if snap.state == "RECORDING":
+        if snap.remote_mqtt == "RECORDING":
+            return [
+                "ECGRHYTHMIA",
+                "REMOTE MQTT",
+                f"REC {_fmt_mmss(snap.rec_seconds)} {_fmt_frame(snap.frame_index)}",
+                "Press: Menu",
+            ]
         return [
             "ECGRHYTHMIA",
             "RECORDING",
@@ -1253,6 +1283,13 @@ def render_main_lines(snap: StatusSnapshot) -> list[str]:
             "Press: Menu",
         ]
     if snap.state == "WAITING FRAME":
+        if snap.remote_mqtt == "RECORDING":
+            return [
+                "ECGRHYTHMIA",
+                "REMOTE MQTT",
+                "WAITING FRAME",
+                "Press: Menu",
+            ]
         return [
             "ECGRHYTHMIA",
             "WAITING FRAME",
@@ -1324,6 +1361,13 @@ def render_detail_lines(
         status = services.status(AI_SERVICE) if services else snap.ai
         return ["AI WORKER", f"STATUS {status}"[:OLED_TEXT_CHARS], "Back: hold"]
     if kind in ("mqtt_status",):
+        if snap.remote_mqtt != "IDLE":
+            return [
+                "MQTT REMOTE",
+                f"STATE {snap.remote_mqtt}"[:OLED_TEXT_CHARS],
+                snap.remote_session_id[-OLED_TEXT_CHARS:],
+                "Back: hold",
+            ]
         status = services.status(MQTT_SERVICE) if services else snap.mqtt
         return ["MQTT", f"STATUS {status}"[:OLED_TEXT_CHARS], "Back: hold"]
     if kind == "acquisition":

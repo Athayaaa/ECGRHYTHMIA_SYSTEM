@@ -294,6 +294,20 @@ RECORDING
 Press: Menu
 ```
 
+Saat recording dimulai dari command MQTT website:
+
+```text
+ECGRHYTHMIA
+REMOTE MQTT
+REC 00:02 F0015
+Press: Menu
+```
+
+Saat controller remote sedang memulai receiver dan AI, OLED menampilkan
+`REMOTE START`. Detail menu **Services -> MQTT Status** juga menampilkan state
+remote dan ID sesi. Status ini dibaca dari
+`runtime/mqtt_controller_state.json` yang ditulis atomik oleh controller.
+
 Saat receiver aktif tetapi frame tidak baru:
 
 ```text

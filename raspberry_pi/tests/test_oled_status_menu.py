@@ -300,6 +300,58 @@ class MenuTests(TestCase):
 
 
 class SnapshotSafetyTests(TestCase):
+    def test_remote_mqtt_recording_is_shown_on_main_screen(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            raw_adc = root / "raw_adc"
+            raw_adc.mkdir()
+            (raw_adc / "frame_000001.json").write_text(
+                json.dumps({"frame_index": 1, "sample_rate_hz": 250}),
+                encoding="utf-8",
+            )
+            state_path = root / "runtime" / "mqtt_controller_state.json"
+            state_path.parent.mkdir()
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "source": "mqtt_remote",
+                        "state": "RECORDING",
+                        "publishing": True,
+                        "session_id": "session_11082026_210000",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class Args:
+                session_dir = str(root)
+                data_root = str(root)
+
+            with mock.patch.object(
+                oled_status,
+                "MQTT_CONTROLLER_STATE_PATH",
+                state_path,
+            ), mock.patch.object(
+                oled_status,
+                "get_receiver_status",
+                return_value={"running": True, "start_time": time.time()},
+            ), mock.patch.object(oled_status, "get_disk_usage", return_value=10.0):
+                snap = oled_status.build_snapshot(Args(), None, True)
+
+            self.assertEqual(snap.remote_mqtt, "RECORDING")
+            self.assertEqual(
+                oled_status.render_main_lines(snap),
+                ["ECGRHYTHMIA", "REMOTE MQTT", "REC 00:00 F0001", "Press: Menu"],
+            )
+
+    def test_remote_mqtt_start_is_shown_before_receiver_is_running(self):
+        snap = oled_status.StatusSnapshot(state="READY", remote_mqtt="STARTING")
+
+        self.assertEqual(
+            oled_status.render_main_lines(snap),
+            ["ECGRHYTHMIA", "REMOTE START", "Starting services", "Press: Menu"],
+        )
+
     def test_session_raw_adc_frames_update_snapshot(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

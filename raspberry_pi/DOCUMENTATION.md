@@ -674,6 +674,8 @@ receiver dan AI; controller mengirim payload frame ke
 `ecgrhythmia/device01`. Sesi hanya boleh dimulai dari satu mode: controller
 remote mengabaikan `START` apabila receiver atau AI sudah aktif dari OLED, dan
 OLED menolak start ketika receiver sudah aktif dari sesi remote.
+Saat sesi remote aktif, OLED utama menampilkan `REMOTE MQTT` beserta durasi dan
+frame terakhir; saat memulai service ia menampilkan `REMOTE START`.
 
 OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 

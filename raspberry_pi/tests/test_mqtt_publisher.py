@@ -1230,6 +1230,27 @@ class MqttControllerTests(TestCase):
             self.assertEqual(services.calls, [])
             self.assertFalse((root / "runtime" / "current_session.env").exists())
 
+    def test_remote_controller_writes_state_for_oled(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            controller, _client, _services = self.make_controller(root)
+
+            controller.start_recording()
+
+            state_path = root / "runtime" / "mqtt_controller_state.json"
+            active_state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(active_state["source"], "mqtt_remote")
+            self.assertEqual(active_state["state"], "RECORDING")
+            self.assertTrue(active_state["publishing"])
+            self.assertEqual(active_state["session_id"], controller.active_session.session_id)
+
+            controller.stop_recording()
+
+            idle_state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(idle_state["state"], "IDLE")
+            self.assertFalse(idle_state["publishing"])
+            self.assertIsNone(idle_state["session_id"])
+
     def test_stop_disables_publish_before_stopping_ai_then_receiver_and_keeps_session(self):
         with tempfile.TemporaryDirectory() as td:
             controller, _client, services = self.make_controller(Path(td))
