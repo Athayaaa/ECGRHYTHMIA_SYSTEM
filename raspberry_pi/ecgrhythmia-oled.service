@@ -6,6 +6,7 @@ After=default.target
 [Service]
 Type=simple
 WorkingDirectory=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 ExecStart=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/venv_oled/bin/python /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/oled_status.py
 Restart=on-failure
 RestartSec=5

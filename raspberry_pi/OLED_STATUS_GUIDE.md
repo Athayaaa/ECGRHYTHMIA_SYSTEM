@@ -221,25 +221,15 @@ chmod 600 runtime/mqtt_credentials.env
 Contoh:
 
 ```text
-MQTT_BROKER=93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud
-MQTT_PORT=8883
-MQTT_TOPIC=ecgrhythmia/device01
-MQTT_DEVICE_ID=device01
-MQTT_USERNAME=ecg-undip
-MQTT_PASSWORD=isi_password_di_sini
-MQTT_TLS=1
-MQTT_JSON_TOPIC_EXACT=1
+HIVEMQ_USERNAME=ecg-undip
+HIVEMQ_PASSWORD=isi_password_di_sini
 ```
 
-Untuk HiveMQ Cloud, `MQTT_TLS=1` wajib agar service meneruskan `--tls` ke
-publisher. Service memvalidasi semua variabel session dan MQTT saat mulai,
+Service sudah menetapkan host HiveMQ, port TLS, topic output, dan nama variable
+kredensial. Service memvalidasi semua variabel session dan MQTT saat mulai,
 sehingga error konfigurasi tampil jelas di journal. Setelah mengubah file ini
 atau unit MQTT, jalankan
 `systemctl --user daemon-reload` lalu restart service MQTT.
-
-`MQTT_JSON_TOPIC_EXACT=1` membuat payload JSON dikirim tepat ke nilai
-`MQTT_TOPIC`, yaitu `ecgrhythmia/device01` pada contoh di atas. Nilai `0`
-mempertahankan topic default `.../frame/json`.
 
 ## User Services
 
