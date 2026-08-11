@@ -35,6 +35,7 @@ journalctl --user -u ecgrhythmia-oled.service -f
 journalctl --user -u ecgrhythmia-receiver.service -f
 journalctl --user -u ecgrhythmia-ai.service -f
 journalctl --user -u ecgrhythmia-mqtt.service -f
+journalctl --user -u ecgrhythmia-mqtt-controller.service -f
 ```
 
 ## 2. Status Service
@@ -44,6 +45,7 @@ systemctl --user status ecgrhythmia-oled.service --no-pager -l
 systemctl --user status ecgrhythmia-receiver.service --no-pager -l
 systemctl --user status ecgrhythmia-ai.service --no-pager -l
 systemctl --user status ecgrhythmia-mqtt.service --no-pager -l
+systemctl --user status ecgrhythmia-mqtt-controller.service --no-pager -l
 
 systemctl --user --failed
 ```
@@ -55,6 +57,7 @@ watch -n 2 '
 systemctl --user is-active ecgrhythmia-receiver.service
 systemctl --user is-active ecgrhythmia-ai.service
 systemctl --user is-active ecgrhythmia-mqtt.service
+systemctl --user is-active ecgrhythmia-mqtt-controller.service
 systemctl --user is-active ecgrhythmia-oled.service
 '
 ```
@@ -63,7 +66,8 @@ Output `active` berarti service sedang berjalan.
 
 ## 3. Kontrol Service
 
-Ganti `<service>` dengan `oled`, `receiver`, `ai`, atau `mqtt`.
+Ganti `<service>` dengan `oled`, `receiver`, `ai`, `mqtt`, atau
+`mqtt-controller`.
 
 ```bash
 systemctl --user start ecgrhythmia-<service>.service
@@ -150,6 +154,24 @@ Connected to broker
 Frame 000001 published, QoS 1
 ```
 
+Service controller remote seharusnya selalu `active` setelah boot dan menulis:
+
+```text
+MQTT controller connected
+Subscribed: ecgrhythmia/device01/command
+Waiting for START command
+```
+
+Untuk meninjau command web yang diterima:
+
+```bash
+journalctl --user -u ecgrhythmia-mqtt-controller.service -f
+```
+
+Kirim `START` atau `STOP` dengan retained off ke
+`ecgrhythmia/device01/command`. Saat sesi sedang dimulai dari OLED, controller
+akan mengabaikan `START` agar session aktif tidak tertimpa.
+
 Di HiveMQ Web Client, subscribe topic berikut sebelum frame baru diproses:
 
 ```text
@@ -202,6 +224,7 @@ ping -c 4 1.1.1.1
 journalctl --user -u ecgrhythmia-receiver.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-ai.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-mqtt.service -b -n 100 --no-pager
+journalctl --user -u ecgrhythmia-mqtt-controller.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-oled.service -b -n 100 --no-pager
 ```
 

@@ -238,6 +238,7 @@ OLED mengontrol service ini memakai `systemctl --user`:
 - `ecgrhythmia-receiver.service`
 - `ecgrhythmia-ai.service`
 - `ecgrhythmia-mqtt.service`
+- `ecgrhythmia-mqtt-controller.service`
 - `ecgrhythmia-oled.service`
 
 Install sebagai user services:
@@ -247,15 +248,17 @@ mkdir -p ~/.config/systemd/user
 cp ecgrhythmia-receiver.service ~/.config/systemd/user/
 cp ecgrhythmia-ai.service ~/.config/systemd/user/
 cp ecgrhythmia-mqtt.service ~/.config/systemd/user/
+cp ecgrhythmia-mqtt-controller.service ~/.config/systemd/user/
 cp ecgrhythmia-oled.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable ecgrhythmia-oled.service
-systemctl --user start ecgrhythmia-oled.service
+systemctl --user enable --now ecgrhythmia-oled.service ecgrhythmia-mqtt-controller.service
 journalctl --user -u ecgrhythmia-oled -f
 ```
 
-Service receiver, AI, dan MQTT tidak perlu di-enable; OLED akan start/stop
-sesuai menu Recording. Jika user service manager belum aktif saat boot:
+Service receiver, AI, dan publisher sesi MQTT tidak perlu di-enable; OLED akan
+start/stop sesuai menu Recording. Controller remote MQTT menyala sendiri saat
+boot dan menunggu command web `START`/`STOP` pada
+`ecgrhythmia/device01/command`. Jika user service manager belum aktif saat boot:
 
 ```bash
 loginctl enable-linger athaya
@@ -265,6 +268,11 @@ Saat menu OLED memulai recording, service MQTT membaca
 `runtime/current_session.env` dan langsung mengikuti prediction pada session
 tersebut. Ia tidak menunggu command MQTT `START`; dashboard cukup subscribe ke
 `ecgrhythmia/device01` sebelum frame baru selesai diproses.
+
+Jangan memulai dua session bersamaan. Saat recording sedang dijalankan dari
+OLED, controller remote akan mengabaikan `START`; gunakan menu OLED untuk
+stop. Sebaliknya, bila session dimulai dari web, kirim `STOP` dari web sebelum
+memulai session baru melalui OLED.
 
 ## Status Pages
 

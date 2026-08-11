@@ -666,6 +666,15 @@ output AI dan mengirim payload JSON ke `ecgrhythmia/device01` setelah pasangan
 frame ECG dan prediction tersedia. Tidak diperlukan command MQTT `START` saat
 session dimulai dari OLED.
 
+Untuk remote control website, service terpisah
+`ecgrhythmia-mqtt-controller.service` harus di-enable saat boot. Ia menunggu
+payload teks non-retained `START` atau `STOP` pada
+`ecgrhythmia/device01/command`. `START` membuat session lalu menjalankan
+receiver dan AI; controller mengirim payload frame ke
+`ecgrhythmia/device01`. Sesi hanya boleh dimulai dari satu mode: controller
+remote mengabaikan `START` apabila receiver atau AI sudah aktif dari OLED, dan
+OLED menolak start ketika receiver sudah aktif dari sesi remote.
+
 OLED tidak menampilkan label, confidence, atau probabilities hasil prediksi AI.
 
 ### Menjalankan
@@ -680,7 +689,7 @@ python3 oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --encoder-b-g
 mkdir -p ~/.config/systemd/user
 cp ecgrhythmia-*.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now ecgrhythmia-oled.service
+systemctl --user enable --now ecgrhythmia-oled.service ecgrhythmia-mqtt-controller.service
 sudo loginctl enable-linger "$USER"
 
 # Cek status service:
@@ -690,8 +699,10 @@ systemctl --user status ecgrhythmia-oled.service
 > **Catatan:** OLED status tetap independen dari transport ECG. Ia mengontrol
 > service receiver/AI/MQTT, tetapi tidak pernah membuka port serial sendiri.
 > Service receiver, AI, dan MQTT tidak perlu di-enable otomatis; menu OLED yang
-> mengelolanya. Lihat `OLED_STATUS_GUIDE.md` untuk wiring, I2C, semua menu, dan
-> troubleshooting rotary secara lengkap.
+> mengelolanya. Service `ecgrhythmia-mqtt-controller.service` berbeda: ia
+> memang di-enable saat boot untuk menerima command remote. Lihat
+> `OLED_STATUS_GUIDE.md` untuk wiring, I2C, semua menu, dan troubleshooting
+> rotary secara lengkap.
 
 ---
 
@@ -1177,6 +1188,7 @@ ECGRHYTHMIA_SYSTEM/
 │   ├── ecgrhythmia-receiver.service # Systemd service receiver
 │   ├── ecgrhythmia-ai.service       # Systemd service AI worker
 │   ├── ecgrhythmia-mqtt.service     # Systemd service MQTT publisher
+│   ├── ecgrhythmia-mqtt-controller.service # Systemd service remote controller
 │   │
 │   ├── validate_latest_frame.py    # Validasi frame raw terakhir
 │   ├── validate_latest_mv_frame.py # Validasi frame mV terakhir
@@ -1417,6 +1429,7 @@ systemctl --user status ecgrhythmia-oled.service --no-pager -l
 systemctl --user status ecgrhythmia-receiver.service --no-pager -l
 systemctl --user status ecgrhythmia-ai.service --no-pager -l
 systemctl --user status ecgrhythmia-mqtt.service --no-pager -l
+systemctl --user status ecgrhythmia-mqtt-controller.service --no-pager -l
 
 # Hanya tampilkan service user yang gagal.
 systemctl --user --failed
@@ -1430,12 +1443,13 @@ systemctl --user is-active ecgrhythmia-oled.service
 systemctl --user is-active ecgrhythmia-receiver.service
 systemctl --user is-active ecgrhythmia-ai.service
 systemctl --user is-active ecgrhythmia-mqtt.service
+systemctl --user is-active ecgrhythmia-mqtt-controller.service
 ```
 
 ### Kontrol Service
 
-Ganti `<service>` dengan salah satu nama: `oled`, `receiver`, `ai`, atau
-`mqtt`.
+Ganti `<service>` dengan salah satu nama: `oled`, `receiver`, `ai`, `mqtt`,
+atau `mqtt-controller`.
 
 ```bash
 systemctl --user start ecgrhythmia-<service>.service
@@ -1459,6 +1473,7 @@ journalctl --user -u ecgrhythmia-oled.service -f
 journalctl --user -u ecgrhythmia-receiver.service -f
 journalctl --user -u ecgrhythmia-ai.service -f
 journalctl --user -u ecgrhythmia-mqtt.service -f
+journalctl --user -u ecgrhythmia-mqtt-controller.service -f
 ```
 
 Pantau seluruh pipeline akuisisi, inferensi, dan publish sekaligus:
@@ -1476,6 +1491,7 @@ Tampilkan 100 baris terakhir sejak boot terakhir (`-b`) tanpa mode realtime:
 journalctl --user -u ecgrhythmia-receiver.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-ai.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-mqtt.service -b -n 100 --no-pager
+journalctl --user -u ecgrhythmia-mqtt-controller.service -b -n 100 --no-pager
 journalctl --user -u ecgrhythmia-oled.service -b -n 100 --no-pager
 ```
 

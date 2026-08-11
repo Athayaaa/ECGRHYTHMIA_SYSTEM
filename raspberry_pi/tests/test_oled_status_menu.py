@@ -325,7 +325,7 @@ class SnapshotSafetyTests(TestCase):
                 oled_status,
                 "get_receiver_status",
                 return_value={"running": True, "start_time": time.time()},
-            ):
+            ), mock.patch.object(oled_status, "get_disk_usage", return_value=10.0):
                 snap = oled_status.build_snapshot(Args(), None, True)
 
             self.assertEqual(snap.frame_index, 2)

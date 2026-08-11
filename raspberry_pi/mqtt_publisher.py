@@ -1625,6 +1625,15 @@ class MqttController:
         if self.recording_state != "IDLE":
             LOGGER.info("START ignored: already recording")
             return
+        if (
+            self.services.is_active(self.config.receiver_service)
+            or self.services.is_active(self.config.ai_service)
+        ):
+            LOGGER.warning(
+                "START ignored: receiver or AI worker is already active; "
+                "stop the current recording from its original controller"
+            )
+            return
         self._set_state("STARTING", publishing=False)
         paths: SessionPaths | None = None
         try:

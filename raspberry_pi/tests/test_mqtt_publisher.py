@@ -1216,6 +1216,20 @@ class MqttControllerTests(TestCase):
             self.assertEqual(controller.active_session, session)
             self.assertEqual(len(services.calls), 2)
 
+    def test_start_does_not_replace_session_owned_by_oled(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            controller, _client, services = self.make_controller(root)
+            services.active.add(mqtt_publisher.RECEIVER_SERVICE)
+
+            controller.start_recording()
+
+            self.assertEqual(controller.recording_state, "IDLE")
+            self.assertFalse(controller.is_publishing)
+            self.assertIsNone(controller.active_session)
+            self.assertEqual(services.calls, [])
+            self.assertFalse((root / "runtime" / "current_session.env").exists())
+
     def test_stop_disables_publish_before_stopping_ai_then_receiver_and_keeps_session(self):
         with tempfile.TemporaryDirectory() as td:
             controller, _client, services = self.make_controller(Path(td))

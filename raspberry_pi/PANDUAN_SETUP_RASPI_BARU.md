@@ -173,7 +173,7 @@ HIVEMQ_PASSWORD=isi_password_hivemq
 Service sudah menyimpan host, port TLS, dan topic output
 `ecgrhythmia/device01` pada unit file.
 
-## 9. Install User Services dan Autostart OLED
+## 9. Install User Services dan Autostart OLED/Remote MQTT
 
 ```bash
 cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
@@ -181,17 +181,26 @@ mkdir -p ~/.config/systemd/user
 cp ecgrhythmia-receiver.service ~/.config/systemd/user/
 cp ecgrhythmia-ai.service ~/.config/systemd/user/
 cp ecgrhythmia-mqtt.service ~/.config/systemd/user/
+cp ecgrhythmia-mqtt-controller.service ~/.config/systemd/user/
 cp ecgrhythmia-oled.service ~/.config/systemd/user/
 
 systemctl --user daemon-reload
-systemctl --user enable --now ecgrhythmia-oled.service
+systemctl --user enable --now ecgrhythmia-oled.service ecgrhythmia-mqtt-controller.service
 sudo loginctl enable-linger "$USER"
 
 systemctl --user status ecgrhythmia-oled.service --no-pager
+systemctl --user status ecgrhythmia-mqtt-controller.service --no-pager
 ```
 
-Hanya OLED yang di-enable saat boot. Dari menu OLED, pilih **Recording -> Start
-New Session**; OLED akan membuat session dan menjalankan receiver -> AI -> MQTT.
+OLED dan controller MQTT remote menyala saat boot. Service
+`ecgrhythmia-mqtt.service` **jangan di-enable**: ia adalah publisher sesi yang
+hanya dijalankan OLED saat memilih **Recording -> Start New Session**.
+
+Controller remote tetap menunggu perintah website di
+`ecgrhythmia/device01/command`, sehingga session juga dapat dimulai dari web.
+Gunakan satu mode per sesi. Jika sesi sedang berjalan dari OLED, perintah
+remote `START` diabaikan; hentikan dari menu OLED. Jika sesi dimulai dari web,
+kirim `STOP` dari web sebelum memulai sesi baru lewat OLED.
 
 ## 10. Verifikasi Pipeline
 
@@ -226,6 +235,18 @@ ecgrhythmia/device01
 ```
 
 Untuk command monitoring lengkap, buka `PANDUAN_MONITORING_RASPI.md`.
+
+Untuk memulai dari website, publish payload teks berikut dengan opsi retained
+**off**:
+
+```text
+Topic:   ecgrhythmia/device01/command
+Payload: START
+```
+
+Controller akan membuat sesi dan menyalakan receiver serta AI. Output frame
+tetap dipublish ke `ecgrhythmia/device01`. Kirim `STOP` pada topic yang sama
+untuk menghentikan sesi remote.
 
 ## 11. Akses SSH dari Laptop
 

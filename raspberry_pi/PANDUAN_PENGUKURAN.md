@@ -566,9 +566,9 @@ Untuk penggunaan mandiri tanpa empat terminal, install service user sekali saja:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp ecgrhythmia-receiver.service ecgrhythmia-ai.service ecgrhythmia-mqtt.service ecgrhythmia-oled.service ~/.config/systemd/user/
+cp ecgrhythmia-receiver.service ecgrhythmia-ai.service ecgrhythmia-mqtt.service ecgrhythmia-mqtt-controller.service ecgrhythmia-oled.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now ecgrhythmia-oled.service
+systemctl --user enable --now ecgrhythmia-oled.service ecgrhythmia-mqtt-controller.service
 sudo loginctl enable-linger "$USER"
 ```
 
@@ -585,6 +585,12 @@ tidak dihapus. Untuk wiring dan pengaturan service dengan GPIO20, lihat
 Service MQTT OLED langsung mengikuti session aktif. Setelah prediction untuk
 frame tersedia, payload JSON dipublish ke `ecgrhythmia/device01`; tidak perlu
 mengirim command MQTT `START` dari website.
+
+Untuk memulai sesi dari website saat perangkat idle, kirim payload teks
+`START` (retained off) ke `ecgrhythmia/device01/command`. Service
+`ecgrhythmia-mqtt-controller.service` membuat session lalu menjalankan receiver
+dan AI. Kirim `STOP` pada topic yang sama untuk menghentikan sesi remote.
+Jangan menjalankan sesi OLED dan sesi remote bersamaan.
 
 ---
 
