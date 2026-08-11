@@ -7,7 +7,7 @@ After=default.target
 Type=simple
 WorkingDirectory=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
 Environment=GPIOZERO_PIN_FACTORY=lgpio
-ExecStart=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/venv_oled/bin/python /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/oled_status.py
+ExecStart=/home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/venv_oled/bin/python /home/athaya/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi/oled_status.py --i2c-bus 1 --address 0x3C --driver ssd1306 --encoder-b-gpio 20
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
