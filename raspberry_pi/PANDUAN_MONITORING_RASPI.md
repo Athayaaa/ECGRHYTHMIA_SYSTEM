@@ -82,7 +82,89 @@ systemctl --user restart ecgrhythmia-ai.service
 systemctl --user status ecgrhythmia-ai.service --no-pager -l
 ```
 
-## 4. Jumlah Frame di Setiap Tahap Pipeline
+## 4. Start dan Stop Recording dari SSH
+
+Gunakan controller MQTT untuk membuat atau menghentikan session dari SSH.
+Controller membuat `current_session.env`, lalu menjalankan receiver dan AI
+dengan urutan yang benar. Jangan menjalankan receiver, AI, dan publisher satu
+per satu dengan `systemctl` untuk membuat recording baru.
+
+Pastikan controller sudah aktif:
+
+```bash
+systemctl --user is-active ecgrhythmia-mqtt-controller.service
+```
+
+Output harus `active`. Bila `mosquitto_pub` belum ada, pasang satu kali:
+
+```bash
+sudo apt update
+sudo apt install -y mosquitto-clients
+```
+
+### Start Session
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+set -a
+source runtime/mqtt_credentials.env
+set +a
+
+mosquitto_pub \
+  -h 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud \
+  -p 8883 \
+  --cafile /etc/ssl/certs/ca-certificates.crt \
+  -u "$HIVEMQ_USERNAME" \
+  -P "$HIVEMQ_PASSWORD" \
+  -i ecgrhythmia-device01-ssh-control \
+  -t ecgrhythmia/device01/command \
+  -m START \
+  -q 1
+```
+
+Command ini non-retained secara default. OLED akan menampilkan `REMOTE START`,
+kemudian `REMOTE MQTT` saat recording sudah aktif.
+
+Verifikasi session dan service setelah beberapa detik:
+
+```bash
+systemctl --user status ecgrhythmia-receiver.service --no-pager
+systemctl --user status ecgrhythmia-ai.service --no-pager
+
+source runtime/current_session.env
+echo "Session: $SESSION_ID"
+echo "Folder:  $SESSION_DIR"
+```
+
+### Stop Session
+
+Sesi yang dimulai dari SSH/remote harus dihentikan dengan command `STOP` yang
+sama, bukan dengan menghentikan receiver secara paksa:
+
+```bash
+cd ~/Projects/ECGRHYTHMIA_SYSTEM/raspberry_pi
+set -a
+source runtime/mqtt_credentials.env
+set +a
+
+mosquitto_pub \
+  -h 93d81a02c1f743b6ab4ea22d7ad9c3e0.s1.eu.hivemq.cloud \
+  -p 8883 \
+  --cafile /etc/ssl/certs/ca-certificates.crt \
+  -u "$HIVEMQ_USERNAME" \
+  -P "$HIVEMQ_PASSWORD" \
+  -i ecgrhythmia-device01-ssh-control \
+  -t ecgrhythmia/device01/command \
+  -m STOP \
+  -q 1
+```
+
+Controller menghentikan AI lalu receiver, memfinalkan `session.json` menjadi
+`STOPPED`, dan kembali menunggu command berikutnya. Jika sesi dimulai dari
+rotary/OLED, hentikan dari menu OLED; controller remote tidak mengambil alih
+sesi tersebut.
+
+## 5. Jumlah Frame di Setiap Tahap Pipeline
 
 Terminal kedua dapat dipakai untuk memastikan setiap tahap mengikuti tahap
 sebelumnya:
@@ -123,7 +205,7 @@ ls -lt "$SESSION_DIR/model_ready" | head
 ls -lt "$SESSION_DIR/predictions" | head
 ```
 
-## 5. Cek Serial ESP32
+## 6. Cek Serial ESP32
 
 ```bash
 # Port serial yang tersedia.
@@ -138,7 +220,7 @@ groups
 
 Jika receiver aktif, `lsof /dev/ttyACM0` biasanya menampilkan proses Python.
 
-## 6. Cek MQTT dan Dashboard
+## 7. Cek MQTT dan Dashboard
 
 Pantau publisher:
 
@@ -178,7 +260,7 @@ Di HiveMQ Web Client, subscribe topic berikut sebelum frame baru diproses:
 ecgrhythmia/device01
 ```
 
-## 7. Suhu, RAM, dan Disk
+## 8. Suhu, RAM, dan Disk
 
 Terminal ketiga untuk memantau kesehatan Raspberry Pi:
 
@@ -197,7 +279,7 @@ df -h /
 
 Nilai suhu dibagi `1000`; contoh `55000` berarti `55 C`.
 
-## 8. Cek Error SD Card atau Filesystem
+## 9. Cek Error SD Card atau Filesystem
 
 Gunakan terutama bila export frame berhenti, muncul `Input/output error`, atau
 filesystem menjadi read-only:
@@ -210,7 +292,7 @@ dmesg -wT | rg --line-buffered -i 'I/O error|ext4|mmc|read-only|remount'
 Tidak boleh muncul `I/O error` atau `Read-only file system`. Jangan menjalankan
 `fsck` pada root filesystem yang masih mounted.
 
-## 9. Cek Jaringan
+## 10. Cek Jaringan
 
 ```bash
 ip addr show
@@ -218,7 +300,7 @@ iw dev wlan0 link
 ping -c 4 1.1.1.1
 ```
 
-## 10. Log Lama Sejak Boot Terakhir
+## 11. Log Lama Sejak Boot Terakhir
 
 ```bash
 journalctl --user -u ecgrhythmia-receiver.service -b -n 100 --no-pager
